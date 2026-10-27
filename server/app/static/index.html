@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>remember 控制台</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <meta name="theme-color" content="#FFF0DD">
+  <link rel="icon" href="/static/remember.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <!-- 引入 Markdown 渲染库与样式 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --primary: #1e5bb8;
+      --primary-hover: #174691;
+      --primary-light: #e8f0fe;
+      --success: #0f9d58;
+      --warning: #f59e0b;
+      --danger: #dc2626;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --radius: 12px;
+      --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-icon {
+      background: var(--primary);
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      font-weight: bold;
+    }
+
+    .brand h1 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .brand span {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .badge-success { background: #dcfce7; color: #166534; }
+    .badge-info { background: #e0f2fe; color: #075985; }
+    .badge-warning { background: #fef3c7; color: #92400e; }
+
+    nav {
+      background: white;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.5rem 2rem 0;
+      overflow-x: auto;
+    }
+
+    .nav-btn {
+      padding: 0.65rem 1.2rem;
+      border: none;
+      background: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .nav-btn:hover {
+      color: var(--primary);
+    }
+
+    .nav-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    main {
+      flex: 1;
+      max-width: 1200px;
+      width: 100%;
+      margin: 1.5rem auto;
+      padding: 0 1.5rem;
+    }
+
+    .tab-pane {
+      display: none;
+    }
+
+    .tab-pane.active {
+      display: block;
+      animation: fadeIn 0.2s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      transition: border-color 0.15s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(30, 91, 184, 0.15);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.65rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-outline {
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .btn-outline:hover {
+      background: var(--bg);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .solution-card {
+      border-left: 4px solid var(--primary);
+      background: #f1f5f9;
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-top: 1rem;
+    }
+
+    .dual-routes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .route-box {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .origin-badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      margin-right: 0.3rem;
+    }
+    .badge-class { background: #dbeafe; color: #1e40af; }
+    .badge-slide { background: #f3e8ff; color: #6b21a8; }
+    .badge-book { background: #ccfbf1; color: #115e59; }
+
+    .markdown-body {
+      line-height: 1.6;
+      color: #334155;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+      color: #0f172a;
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--primary);
+      padding-left: 1rem;
+      color: #475569;
+      background: #f8fafc;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      margin: 0.8rem 0;
+    }
+    .markdown-body pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 0.8rem 0;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #1e293b;
+      color: white;
+      padding: 0.8rem 1.4rem;
+      border-radius: 8px;
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+      display: none;
+      z-index: 1000;
+    }
+
+    @media (max-width: 768px) {
+      header {
+        padding: 0.75rem 1rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      header h1 {
+        font-size: 1.1rem;
+      }
+      nav {
+        padding: 0.4rem 0.5rem 0;
+      }
+      .nav-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.85rem;
+      }
+      main {
+        padding: 0 0.75rem;
+        margin: 1rem auto;
+      }
+      .card {
+        padding: 1rem;
+      }
+      .grid-2, .grid-3 {
+        grid-template-columns: 1fr;
+      }
+      .toast {
+        bottom: 1rem;
+        right: 1rem;
+        left: 1rem;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 头部导航 -->
+  <header>
+    <div class="brand">
+      <img class="brand-icon" src="/static/icon-192.png" alt="">
+      <div>
+        <h1>remember 控制台</h1>
+        <span>课表 · 笔记 · 课堂录音</span>
+      </div>
+    </div>
+    <div class="header-status">
+      <span id="health-badge" class="badge badge-info">检测服务中...</span>
+      <a href="/docs" target="_blank" class="btn btn-outline" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;">API 文档 ↗</a>
+    </div>
+  </header>
+
+  <!-- 选项卡导航 -->
+  <nav>
+    <button class="nav-btn active" onclick="switchTab('tab-dashboard')">📊 状态概览</button>
+    <button class="nav-btn" onclick="switchTab('tab-schedule')">📅 课程与课表</button>
+    <button class="nav-btn" onclick="switchTab('tab-recordings')">🎙️ 录音与转写</button>
+    <button class="nav-btn" onclick="switchTab('tab-notes')">📝 课堂笔记</button>
+    <button class="nav-btn" onclick="switchTab('tab-settings')">⚙️ 存储与设置</button>
+  </nav>
+
+  <main>
+    <!-- TAB 1: 状态概览 -->
+    <section id="tab-dashboard" class="tab-pane active">
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title">运行模式</div>
+          <div id="mode-text" style="font-size: 1.5rem; font-weight: bold; color: var(--primary);">本地离线模式</div>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.4rem;">ROCm GPU Whisper + 纯本地存储</p>
+        </div>
+        <div class="card">
+          <div class="card-title">Obsidian 库状态</div>
+          <div id="obs-status-text" style="font-size: 1.2rem; font-weight: bold; color: var(--success);">已就绪</div>
+          <p id="obs-path-display" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.4rem; word-break: break-all;">-</p>
+        </div>
+        <div class="card">
+          <div class="card-title">今日课程</div>
+          <div id="today-class-count" style="font-size: 1.5rem; font-weight: bold; color: var(--primary);">- 节课</div>
+          <p id="today-class-tip" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.4rem;">课前 15 分钟智能提醒就绪</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">核心设计契约与工作流规则</div>
+        <ul style="padding-left: 1.2rem; line-height: 1.8; color: var(--text-muted); font-size: 0.9rem;">
+          <li><strong>融合式单文件笔记</strong>：概述 → Mermaid 导图 → 核心点（配 💡拓展 Callout）→ 老师强调 → 待办 → 勘误 → ⚠️待确认（已剔除自测）。</li>
+          <li><strong>转写音频即删</strong>：录音经本地 Whisper 转写并验证后立即删除，仅保留转写文本原文，节约空间与保护隐私（ADR-003）。</li>
+          <li><strong>作业双路线求解</strong>：检索课堂笔记优先按老师讲法解答，AI 独立解作交叉校验；<strong>分歧深入归因并给出唯一确定定案，严禁并列两种都对（ADR-004）</strong>。</li>
+          <li><strong>教材回填保真</strong>：0-based 两档分段映射精准定位，仅回填教材确有内容，无依据坚决保留 ⚠️待确认。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- TAB 2: 课程与课表 -->
+    <section id="tab-schedule" class="tab-pane">
+      <div class="card" style="background: #eff6ff; border: 1px solid #bfdbfe;">
+        <div class="card-title" style="color: #1e3a8a;">🤖 课表到点自动录音联动（全自动后台唤醒）</div>
+        <p style="font-size: 0.9rem; color: #1e40af; line-height: 1.6;">
+          <strong>手机端自动录音已激活</strong>：导入排课后，安卓客户端将自动同步课表并向系统注册精确闹钟定时唤醒。<br>
+          到上课时间（如周一 08:00《工程力学》），手机即便处于息屏、锁屏状态也会<strong>自动唤醒并启动录音保活服务</strong>；下课后自动完成归档并入队上传！
+        </p>
+        <div style="margin-top: 1rem; display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center;">
+          <select id="preset-select" style="max-width: 280px; padding: 0.5rem 0.8rem; border-radius: 6px; border: 1px solid #93c5fd;">
+            <option value="engineering_freshman_2026_fall">大一工科通用课表 (2026-秋)</option>
+          </select>
+          <button class="btn btn-primary" onclick="applyCurriculumPreset()">一键导入专业课表并布防</button>
+          <span id="preset-status-tip" style="font-size: 0.85rem; color: #15803d; font-weight: 600;"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📷 上传教务课表截图 (智能 OCR 识别导入)</div>
+        <div class="grid-2">
+          <div>
+            <div class="form-group">
+              <label>选取教务系统或手机课表截图 (PNG/JPG)</label>
+              <input type="file" id="schedule-ocr-file" accept="image/*">
+            </div>
+            <button class="btn btn-outline" onclick="uploadScheduleOCR()">开始 OCR 识别解析</button>
+          </div>
+          <div>
+            <div id="schedule-ocr-result" style="font-size: 0.85rem; color: var(--text-muted); background: var(--bg); padding: 0.8rem; border-radius: 8px; min-height: 80px; white-space: pre-wrap;">等待选取课表截图...</div>
+            <button id="btn-confirm-ocr" class="btn btn-primary" style="display: none; margin-top: 0.6rem; background: var(--success); border-color: var(--success);" onclick="confirmScheduleOCR()">确认将识别到的课表入库并布防</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">本学期课程列表 (2026-秋)</div>
+        <div id="courses-list" class="grid-2">加载中...</div>
+      </div>
+      <div class="card">
+        <div class="card-title">今日上课课表与提醒</div>
+        <div id="today-schedule-list">加载中...</div>
+      </div>
+    </section>
+
+    <!-- TAB 3: 录音与转写 -->
+    <section id="tab-recordings" class="tab-pane">
+      <div class="card">
+        <div class="card-title">上课录音上传与转写</div>
+        <div class="grid-2">
+          <div>
+            <div class="form-group">
+              <label>选择课程</label>
+              <select id="rec-course-select">
+                <option value="工程力学">工程力学</option>
+                <option value="普通物理1">普通物理1</option>
+                <option value="线性代数">线性代数</option>
+                <option value="电工电子">电工电子</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>课次序号 (Lesson)</label>
+              <input type="number" id="rec-lesson-input" value="1" min="1">
+            </div>
+            <div class="form-group">
+              <label>上课日期</label>
+              <input type="date" id="rec-date-input">
+            </div>
+            <div class="form-group">
+              <label>选择音频文件 (.m4a / .wav / .mp3)</label>
+              <input type="file" id="rec-file-input" accept="audio/*">
+            </div>
+            <button class="btn btn-primary" onclick="uploadAudio()">上传并登记音频</button>
+          </div>
+          <div>
+            <label>转写任务状态 / 队列</label>
+            <div id="transcribe-status-box" style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; height: 220px; overflow-y: auto; font-size: 0.85rem; font-family: monospace;">
+              暂无进行中的转写任务。
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: 课堂笔记 -->
+    <section id="tab-notes" class="tab-pane">
+      <div class="grid-2">
+        <div>
+          <div class="card">
+            <div class="card-title">
+              <span>生成融合式新笔记</span>
+            </div>
+            <div class="form-group">
+              <label>课程名称</label>
+              <select id="note-course-select">
+                <option value="电路原理">电路原理</option>
+                <option value="工程力学">工程力学</option>
+                <option value="普通物理1">普通物理1</option>
+                <option value="线性代数">线性代数</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>课次 (Lesson)</label>
+              <input type="number" id="note-lesson-input" value="1" min="1">
+            </div>
+            <div class="form-group">
+              <label>核心中文主题关键词（3-6字）</label>
+              <input type="text" id="note-topic-input" placeholder="例如：暂态三要素分析">
+            </div>
+            <button class="btn btn-primary" id="btn-gen-note" onclick="generateNote()">🚀 生成笔记并归档到 Obsidian</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title">已归档笔记清单</div>
+            <div id="notes-list-container" style="max-height: 400px; overflow-y: auto;">加载中...</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="card">
+            <div class="card-title">
+              <span id="preview-title">笔记内容预览</span>
+              <button class="btn btn-outline" id="btn-backfill" style="display: none;" onclick="triggerBackfill()">📖 教材回填补强</button>
+            </div>
+            <div id="note-preview-body" class="markdown-body" style="min-height: 450px; max-height: 600px; overflow-y: auto; padding: 1rem; background: #fafafa; border-radius: 8px;">
+              请在左侧选择一篇笔记或生成新笔记查看。
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: 存储与设置 -->
+    <section id="tab-settings" class="tab-pane">
+      <div class="card">
+        <div class="card-title">Obsidian 笔记库动态配置（支持任意设备路径）</div>
+        <div class="form-group">
+          <label>当前生效的 Obsidian 库绝对路径</label>
+          <input type="text" id="setting-obs-path" placeholder="例如 D:\MyNotes 或 E:\StudyVault">
+        </div>
+        <div style="display: flex; gap: 0.8rem;">
+          <button class="btn btn-primary" onclick="initObsidianPath()">保存并自动初始化骨架</button>
+          <button class="btn btn-outline" onclick="loadObsidianSettings()">重新检测</button>
+        </div>
+        <div id="obs-detail-status" style="margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">云端 ASR 用量统计与预算监控（FR-17）</div>
+        <div id="usage-summary-box">加载中...</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast">操作成功</div>
+
+  <script>
+    // Tab 切换逻辑
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+      event.target.classList.add('active');
+
+      if (tabId === 'tab-schedule') loadSchedule();
+      if (tabId === 'tab-notes') loadNotesList();
+      if (tabId === 'tab-settings') { loadObsidianSettings(); loadUsage(); }
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2500);
+    }
+
+    // 初始化加载
+    window.addEventListener('DOMContentLoaded', async () => {
+      document.getElementById('rec-date-input').value = new Date().toISOString().substring(0, 10);
+      await checkHealth();
+      await loadObsidianSettings();
+      await loadSchedule();
+    });
+
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        if (data.code === 0) {
+          const badge = document.getElementById('health-badge');
+          badge.className = 'badge badge-success';
+          badge.innerText = `服务正常 (${data.data.mode})`;
+          document.getElementById('mode-text').innerText = data.data.mode === 'local' ? '本地离线模式 (Local)' : '云端多租户模式 (Cloud)';
+        }
+      } catch (e) {
+        const badge = document.getElementById('health-badge');
+        badge.className = 'badge badge-warning';
+        badge.innerText = '后端连接失败';
+      }
+    }
+
+    async function loadObsidianSettings() {
+      try {
+        const res = await fetch('/api/settings/obsidian');
+        const data = await res.json();
+        if (data.code === 0) {
+          const d = data.data;
+          const currentPath = d.obsidian_root || d.path || '未设置';
+          document.getElementById('obs-path-display').innerText = currentPath;
+          if (currentPath !== '未设置') {
+            document.getElementById('setting-obs-path').value = currentPath;
+          }
+          const statusText = document.getElementById('obs-status-text');
+          const isInitialized = Boolean(d.is_fully_initialized || d.skeleton_initialized);
+          if (isInitialized) {
+            statusText.innerText = '已就绪 (骨架完整)';
+            statusText.style.color = 'var(--success)';
+          } else if (d.exists) {
+            statusText.innerText = '目录存在 (待初始化骨架)';
+            statusText.style.color = 'var(--warning)';
+          } else {
+            statusText.innerText = '目录不存在';
+            statusText.style.color = 'var(--danger)';
+          }
+
+          const isDir = Boolean(d.is_dir || d.is_directory);
+          const isWritable = Boolean(d.is_writable || d.writable);
+
+          document.getElementById('obs-detail-status').innerHTML = `
+            目录存在: ${d.exists ? '✅' : '❌'} ｜
+            为有效文件夹: ${isDir ? '✅' : '❌'} ｜
+            具备写权限: ${isWritable ? '✅' : '❌'} ｜
+            骨架已初始化: ${isInitialized ? '✅' : '❌'}
+            ${d.error ? `<div style="color: var(--danger); margin-top: 0.3rem;">⚠️ 错误详情: ${d.error}</div>` : ''}
+          `;
+        }
+      } catch (e) {
+        console.error('loadObsidianSettings error', e);
+      }
+    }
+
+    async function initObsidianPath() {
+      let pathVal = document.getElementById('setting-obs-path').value.trim();
+      // 过滤用户复制时可能携带的外层引号
+      pathVal = pathVal.replace(/^["']|["']$/g, '').trim();
+      if (!pathVal) return alert('请输入有效的 Obsidian 库路径');
+
+      const btn = event.target;
+      const originalText = btn.innerText;
+      btn.disabled = true;
+      btn.innerText = '正在初始化...';
+
+      try {
+        const res = await fetch('/api/settings/obsidian/init', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: pathVal,
+            auto_switch: true,
+            persist: true
+          })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast('Obsidian 路径设置并初始化成功！');
+          await loadObsidianSettings();
+        } else {
+          alert('初始化失败: ' + (data.message || JSON.stringify(data)));
+        }
+      } catch (e) {
+        alert('请求发生错误: ' + e);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = originalText;
+      }
+    }
+
+    async function loadSchedule() {
+      try {
+        const cRes = await fetch('/api/courses');
+        const cData = await cRes.json();
+        if (cData.code === 0) {
+          const container = document.getElementById('courses-list');
+          container.innerHTML = cData.data.map(c => `
+            <div style="border: 1px solid var(--border); padding: 0.8rem; border-radius: 8px;">
+              <div style="font-weight: bold; color: var(--primary);">${c.name}</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">教师：${c.teacher} ｜ 学期：${c.semester}</div>
+            </div>
+          `).join('');
+        }
+
+        const tRes = await fetch('/api/schedule/today');
+        const tData = await tRes.json();
+        if (tData.code === 0) {
+          const entries = tData.data.items || tData.data.entries || [];
+          document.getElementById('today-class-count').innerText = `${entries.length} 节课`;
+          const sContainer = document.getElementById('today-schedule-list');
+          if (entries.length === 0) {
+            sContainer.innerHTML = '<p style="color: var(--text-muted);">今日暂无排课安排，可安心自习与复习。</p>';
+          } else {
+            sContainer.innerHTML = entries.map(e => `
+              <div style="display: flex; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid var(--border);">
+                <div><strong>${e.course_name}</strong> · ${e.location || '待定'}</div>
+                <div style="color: var(--primary); font-weight: bold;">${e.start_time} ~ ${e.end_time}</div>
+              </div>
+            `).join('');
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function applyCurriculumPreset() {
+      const presetId = document.getElementById('preset-select').value;
+      const tip = document.getElementById('preset-status-tip');
+      tip.innerText = '正在导入课表并布防...';
+      try {
+        const res = await fetch(`/api/schedule/presets/${presetId}/apply`, {
+          method: 'POST'
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          tip.innerText = '🎉 课表导入成功！手机端自动录音已布防！';
+          showToast('课表导入成功！已联动手机端自动录音');
+          await loadSchedule();
+        } else {
+          tip.innerText = '导入失败: ' + data.message;
+        }
+      } catch (e) {
+        tip.innerText = '请求失败: ' + e;
+      }
+    }
+
+    let activeNoteId = null;
+
+    async function loadNotesList() {
+      try {
+        const res = await fetch('/api/notes');
+        const data = await res.json();
+        if (data.code === 0) {
+          const items = data.data.items || [];
+          const container = document.getElementById('notes-list-container');
+          if (items.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">暂无笔记，请在上方生成一篇。</p>';
+            return;
+          }
+          container.innerHTML = items.map(n => `
+            <div onclick="viewNote('${n.note_id}', '${n.topic}')" style="cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.5rem; transition: background 0.15s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='white'">
+              <div style="font-weight: bold; color: var(--text);">${n.topic}</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted);">${n.course_name} ｜ 第${n.lesson}课 ｜ ${n.class_date}</div>
+            </div>
+          `).join('');
+        }
+      } catch (e) {}
+    }
+
+    async function viewNote(noteId, topic) {
+      activeNoteId = noteId;
+      document.getElementById('preview-title').innerText = topic;
+      document.getElementById('btn-backfill').style.display = 'inline-block';
+      const body = document.getElementById('note-preview-body');
+      body.innerHTML = '加载正文中...';
+      try {
+        const res = await fetch(`/api/notes/${noteId}/content`);
+        const data = await res.json();
+        if (data.code === 0) {
+          body.innerHTML = marked.parse(data.data.markdown || '');
+        }
+      } catch (e) {
+        body.innerHTML = '加载失败: ' + e;
+      }
+    }
+
+    async function generateNote() {
+      const btn = document.getElementById('btn-gen-note');
+      btn.disabled = true;
+      btn.innerText = '正在生成融合笔记...';
+      try {
+        const res = await fetch('/api/notes/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            course_name: document.getElementById('note-course-select').value,
+            lesson: parseInt(document.getElementById('note-lesson-input').value, 10),
+            topic: document.getElementById('note-topic-input').value.trim() || undefined,
+            class_date: new Date().toISOString().substring(0, 10),
+          })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast('笔记生成成功！已存入 Obsidian 库');
+          loadNotesList();
+          viewNote(data.data.note.note_id, data.data.note.topic);
+        } else {
+          alert('生成失败: ' + data.message);
+        }
+      } catch (e) {
+        alert('错误: ' + e);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '🚀 生成笔记并归档到 Obsidian';
+      }
+    }
+
+    async function triggerBackfill() {
+      if (!activeNoteId) return;
+      showToast('正在根据教材印刷页码回填知识点...');
+      try {
+        const res = await fetch('/api/textbooks/backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note_id: activeNoteId })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast('教材回填补全完成！');
+          viewNote(activeNoteId, document.getElementById('preview-title').innerText);
+        }
+      } catch (e) { alert('回填失败: ' + e); }
+    }
+
+    async function loadUsage() {
+      try {
+        const res = await fetch('/api/usage/summary');
+        const data = await res.json();
+        if (data.code === 0) {
+          const d = data.data;
+          document.getElementById('usage-summary-box').innerHTML = `
+            <div style="display: flex; gap: 2rem; margin-bottom: 1rem;">
+              <div><strong>总转写时长：</strong>${d.total_hours} 小时 (${d.total_seconds}秒)</div>
+              <div><strong>调用次数：</strong>${d.total_requests} 次</div>
+              <div><strong>总计预估费用：</strong>¥${d.total_actual_cost} CNY</div>
+            </div>
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem;">
+                <span>月度预算使用率 (上限 ¥${d.monthly_budget} CNY)</span>
+                <span>${d.budget_used_percent}%</span>
+              </div>
+              <div style="background: #e2e8f0; height: 10px; border-radius: 5px; overflow: hidden;">
+                <div style="background: ${d.is_over_budget ? 'var(--danger)' : 'var(--primary)'}; width: ${Math.min(100, d.budget_used_percent)}%; height: 100%;"></div>
+              </div>
+            </div>
+          `;
+        }
+      } catch (e) {}
+    }
+
+    async function uploadAudio() {
+      const fileInput = document.getElementById('rec-file-input');
+      if (!fileInput.files.length) return alert('请先选取音频文件');
+      const formData = new FormData();
+      formData.append('course_id', document.getElementById('rec-course-select').value);
+      formData.append('lesson', document.getElementById('rec-lesson-input').value);
+      formData.append('class_date', document.getElementById('rec-date-input').value);
+      formData.append('file', fileInput.files[0]);
+
+      const statusBox = document.getElementById('transcribe-status-box');
+      statusBox.innerText = '正在上传音频文件...';
+      try {
+        const res = await fetch('/api/recordings/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          statusBox.innerText = `上传成功！\n录音ID: ${data.data.id}\n文件大小: ${(data.data.size_bytes/1024/1024).toFixed(2)} MB\n准备进入 GPU Whisper 转写队列...`;
+          showToast('音频上传登记成功');
+        } else {
+          statusBox.innerText = '上传失败: ' + data.message;
+        }
+      } catch (e) {
+        statusBox.innerText = '错误: ' + e;
+      }
+    }
+
+    let pendingOCRItems = [];
+
+    async function uploadScheduleOCR() {
+      const fileInput = document.getElementById('schedule-ocr-file');
+      if (!fileInput.files.length) return alert('请先选取课表截图图片');
+      const box = document.getElementById('schedule-ocr-result');
+      box.innerText = '正在上传并进行多模态 OCR 识别解析...';
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+
+      try {
+        const res = await fetch('/api/schedule/ocr', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          pendingOCRItems = data.data.items || [];
+          if (pendingOCRItems.length === 0) {
+            box.innerText = '未从图片中提取到有效课程条目，请确认图片清晰度。';
+            document.getElementById('btn-confirm-ocr').style.display = 'none';
+          } else {
+            box.innerText = `成功识别出 ${pendingOCRItems.length} 门课程安排：\n` +
+              pendingOCRItems.map(i => `• ${i.course_name} (周${i.weekday} ${i.start_time || ''}~${i.end_time || ''} ${i.location || ''})`).join('\n');
+            document.getElementById('btn-confirm-ocr').style.display = 'inline-block';
+          }
+        } else {
+          box.innerText = '识别失败: ' + data.message;
+        }
+      } catch (e) {
+        box.innerText = '请求失败: ' + e;
+      }
+    }
+
+    async function confirmScheduleOCR() {
+      if (!pendingOCRItems.length) return;
+      const box = document.getElementById('schedule-ocr-result');
+      box.innerText = '正在批量确认入库并向手机端布防...';
+      try {
+        const res = await fetch('/api/schedule/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: pendingOCRItems })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          box.innerText = '🎉 课表确认入库成功！已激活手机端到点自动录音！';
+          document.getElementById('btn-confirm-ocr').style.display = 'none';
+          showToast('课表入库成功！已联动自动录音');
+          await loadSchedule();
+        } else {
+          box.innerText = '确认入库失败: ' + data.message;
+        }
+      } catch (e) {
+        box.innerText = '请求错误: ' + e;
+      }
+    }
+
+    // PWA Service Worker 注册（支持手机浏览器一键“安装到主屏幕”）
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

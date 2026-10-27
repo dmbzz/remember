@@ -1,0 +1,44 @@
+[project]
+name = "class-notes-assistant-server"
+version = "0.1.0"
+description = "remember后端（FastAPI）—— 本地/云端同一套代码，配置切换"
+requires-python = ">=3.13"
+readme = "../README.md"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# 代码风格：ruff（lint + format）。PEP 8，行宽 100，中文注释。
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [".venv", "build", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "C4", "SIM"]
+ignore = [
+    "E501",  # 行宽由 formatter 处理，长中文注释允许超宽
+    "B008",  # FastAPI 依赖注入惯用 Depends() 作为默认值
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+# pytest：asyncio_mode=auto，让 async 测试无需逐个加 marker
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

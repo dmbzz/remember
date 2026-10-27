@@ -1,0 +1,87 @@
+# 云端模式配置
+# 形态：Postgres + 对象存储 + 云 ASR/云视觉 + 强制鉴权与 HTTPS
+# 优先级：本文件 < 环境变量（CNA_ 前缀）
+
+deployment_mode: cloud
+app_name: class_notes_assistant
+version: "0.1.0"
+
+# ---- 服务 ----
+host: "0.0.0.0"
+port: 8000
+log_level: INFO
+log_format: json
+
+# ---- 数据层：Postgres（asyncpg 驱动）----
+db_url: "postgresql+asyncpg://classnotes:classnotes@127.0.0.1:5432/classnotes"
+db_echo: false
+
+# ---- 存储：对象存储（S3 / OSS / MinIO 兼容）----
+storage_backend: object_store
+storage_root: "/var/lib/classnotes_storage"
+
+# ---- Provider 选择 ----
+transcription_provider: cloud_api
+llm_provider: cloud_llm
+vision_provider: cloud_vision
+
+# ---- 数据目录 ----
+obsidian_root: "/data/notes"
+textbook_root: "/data/教材原件"
+handoff_dir: "docs/handoff"
+
+# ---- 鉴权 / 传输：云端强制（FR-18 / FR-05）----
+auth_enabled: true
+auth_token: "change-me-please"   # 生产环境务必用 CNA_AUTH_TOKEN 覆盖
+force_https: true
+
+# ---- 笔记多端同步（FR-31/FR-32）----
+# 云端为同步**汇聚点**（Win 与 Android 各自与服务端同步）；只同步笔记 Markdown，冲突保留两份。
+sync:
+  enabled: true
+  endpoint: ""              # 云端自身即汇聚点，无需外指
+  scope: "notes_markdown"   # 只同步笔记 Markdown；转写原文/教材扫描图不预同步
+  conflict_policy: "keep_both"   # 保留两份，绝不静默覆盖
+  interval_seconds: 300
+
+# ---- Provider 参数 ----
+providers:
+  local_gpu:
+    model_name: "faster-whisper-medium"
+    device: "cpu"
+    compute_type: "int8"
+    language: "zh"
+    beam_size: 5
+    vad_filter: true
+  cloud_asr:
+    endpoint: "https://api.example-asr.com/v1/audio/transcriptions"
+    api_key: ""
+    model: "whisper-1"
+    unit_price_per_hour: 0.0
+  on_device:
+    model_name: ""
+  cloud_llm:
+    base_url: "https://api.openai.com/v1"
+    api_key: ""
+    model: "gpt-4o-mini"
+    timeout: 120.0
+    max_retries: 3
+  local_llm:
+    base_url: "http://localhost:11434/v1"
+    api_key: "not-needed"
+    model: "qwen2.5:7b"
+    timeout: 300.0
+  cloud_vision:
+    base_url: "https://api.openai.com/v1"
+    api_key: ""
+    model: "gpt-4o-mini"
+    timeout: 180.0
+  local_vision:
+    model_name: ""
+  object_store:
+    endpoint: "https://s3.example.com"
+    bucket: "classnotes"
+    access_key: ""
+    secret_key: ""
+    region: "ap-guangzhou"
+    prefix: "classnotes/"

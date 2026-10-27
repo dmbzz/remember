@@ -1,0 +1,60 @@
+id: "cs"
+name: "计算机科学与人工智能（核心课）"
+description: "包含数据结构、操作系统、计算机组成原理、算法分析"
+major: "信息工科·计算机类"
+semester: "2026秋"
+semester_start: "2026-08-31"
+time_slot_template: "standard_830"
+courses:
+  - name: "数据结构与算法"
+    teacher: "高老师"
+    textbook_ref: "数据结构_严蔚敏"
+    schedule:
+      - weekday: 1
+        period: 2
+        start_time: "10:25"
+        end_time: "12:00"
+        location: "信息楼301"
+        weeks: "1-16"
+      - weekday: 4
+        period: 1
+        start_time: "08:30"
+        end_time: "10:05"
+        location: "信息楼301"
+        weeks: "1-16"
+  - name: "计算机组成原理"
+    teacher: "刘老师"
+    textbook_ref: "计算机组成与系统结构_袁春风"
+    schedule:
+      - weekday: 2
+        period: 2
+        start_time: "10:25"
+        end_time: "12:00"
+        location: "计机大楼102"
+        weeks: "1-16"
+      - weekday: 5
+        period: 3
+        start_time: "14:00"
+        end_time: "15:35"
+        location: "计机大楼102"
+        weeks: "1-16"
+  - name: "操作系统"
+    teacher: "汤老师"
+    textbook_ref: "计算机操作系统_汤小丹"
+    schedule:
+      - weekday: 3
+        period: 1
+        start_time: "08:30"
+        end_time: "10:05"
+        location: "信息楼204"
+        weeks: "1-16"
+  - name: "离散数学"
+    teacher: "屈老师"
+    textbook_ref: "离散数学_左孝凌"
+    schedule:
+      - weekday: 2
+        period: 4
+        start_time: "15:55"
+        end_time: "17:30"
+        location: "公共教学二楼101"
+        weeks: "1-16"

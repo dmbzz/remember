@@ -1,0 +1,50 @@
+id: "general_freshman"
+name: "大一通识与理工基础（大一公共课）"
+description: "包含高等数学上、大学英语、思想道德与法治、大学物理"
+major: "通识·理工大类"
+semester: "2026秋"
+semester_start: "2026-08-31"
+time_slot_template: "standard_800"
+courses:
+  - name: "高等数学A(1)"
+    teacher: "同济教研组"
+    textbook_ref: "高等数学_第7版_同济大学"
+    schedule:
+      - weekday: 1
+        period: 1
+        start_time: "08:00"
+        end_time: "09:40"
+        location: "公教楼A101"
+        weeks: "1-16"
+      - weekday: 3
+        period: 1
+        start_time: "08:00"
+        end_time: "09:40"
+        location: "公教楼A101"
+        weeks: "1-16"
+      - weekday: 5
+        period: 2
+        start_time: "10:00"
+        end_time: "11:40"
+        location: "公教楼A101"
+        weeks: "1-16"
+  - name: "大学英语(1)"
+    teacher: "外语组"
+    textbook_ref: "新视野大学英语"
+    schedule:
+      - weekday: 2
+        period: 2
+        start_time: "10:00"
+        end_time: "11:40"
+        location: "语音楼301"
+        weeks: "1-16"
+  - name: "思想道德与法治"
+    teacher: "马院组"
+    textbook_ref: "思想道德与法治_马克思主义理论工程"
+    schedule:
+      - weekday: 4
+        period: 3
+        start_time: "14:00"
+        end_time: "15:40"
+        location: "阶梯大教室1"
+        weeks: "1-16"

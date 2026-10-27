@@ -1,0 +1,43 @@
+# remember后端依赖（Python 3.13）
+# 安装：python -m pip install -r requirements.txt
+
+# —— Web / 框架 ——
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.5
+python-multipart>=0.0.12
+
+# —— 数据层 ——
+SQLAlchemy>=2.0.35
+alembic>=1.13
+aiosqlite>=0.20
+asyncpg>=0.29
+
+# —— 转写（本地 GPU；AMD ROCm，非 CUDA）——
+# 注意：Windows + ROCm 需先安装 AMD 官方 PyTorch/ROCm 运行时，见 README 与 ADR。
+faster-whisper>=1.0
+
+# —— 文档 / 视觉 ——
+pymupdf>=1.24
+python-pptx>=1.0
+pillow>=10.4
+
+# —— 课表导入（ICS）——
+icalendar>=6.0
+
+# —— LLM / 云服务 ——
+httpx>=0.27
+openai>=1.50
+boto3>=1.35
+
+# —— 工具 ——
+structlog>=24.4
+python-dateutil>=2.9
+tenacity>=9.0
+pyyaml>=6.0
+
+# —— 开发 / 测试 ——
+pytest>=8.3
+pytest-asyncio>=0.24
+ruff>=0.6

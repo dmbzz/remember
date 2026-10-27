@@ -1,0 +1,44 @@
+name: class_notes_assistant
+description: "remember · 课表、笔记与课堂录音（Windows + Android）"
+publish_to: "none"
+version: 0.1.37+38
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # 网络与存储
+  dio: ^5.4.0
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+
+  # Markdown 与富文本渲染（支持 Callout / Mermaid）
+  flutter_markdown: ^0.7.1
+  # 0.7.3+ 使用 Flutter 3.27+ 的布局 API，本工程 Flutter 为 3.24。
+  flutter_math_fork: 0.7.2
+  markdown: ^7.2.2
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/
+    - assets/fonts/OFL-NotoSansSC.txt
+  fonts:
+    - family: StudySans
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansSC-Semibold.ttf
+          weight: 600

@@ -1,0 +1,67 @@
+id: "mechanical"
+name: "机械工程与自动化（典型大二秋）"
+description: "包含工程力学、普通物理、线性代数、电工电子核心专业基础课"
+major: "工科·机械类"
+semester: "2026秋"
+semester_start: "2026-08-31"          # 学期第 1 周周一（真实课表核对：2026-08-31）
+time_slot_template: "standard_815"    # 真实作息：08:15 / 10:05 / 14:15 / 16:00 / 19:30
+# weeks 语法：周次集合，支持区间与逗号，如 "1-16"、"1-5,7-12"（停课周断档）、"1,3,5,...,19"（单周）
+courses:
+  - name: "工程力学"
+    teacher: "李老师"
+    textbook_ref: "工程力学_工程静力学与材料力学_第3版"
+    schedule:
+      - weekday: 1
+        period: 1
+        start_time: "08:15"
+        end_time: "09:50"
+        location: "工科楼201"
+        weeks: "1-16"
+      - weekday: 3
+        period: 2
+        start_time: "10:05"
+        end_time: "11:40"
+        location: "工科楼201"
+        weeks: "1-16"
+  - name: "普通物理"
+    teacher: "张老师"
+    textbook_ref: "普通物理学_第7版"
+    schedule:
+      - weekday: 2
+        period: 1
+        start_time: "08:15"
+        end_time: "09:50"
+        location: "理学楼302"
+        weeks: "1-16"
+      - weekday: 4
+        period: 3
+        start_time: "14:15"
+        end_time: "15:50"
+        location: "理学楼302"
+        weeks: "1-16"
+  - name: "线性代数"
+    teacher: "王老师"
+    textbook_ref: "线性代数及其应用_第3版"
+    schedule:
+      - weekday: 1
+        period: 3
+        start_time: "14:15"
+        end_time: "15:50"
+        location: "教学楼405"
+        weeks: "1-16"
+      - weekday: 5
+        period: 1
+        start_time: "08:15"
+        end_time: "09:50"
+        location: "教学楼405"
+        weeks: "1-16"
+  - name: "电工电子"
+    teacher: "陈老师"
+    textbook_ref: "电工学_电工技术_第7版"
+    schedule:
+      - weekday: 3
+        period: 4
+        start_time: "16:00"
+        end_time: "17:35"
+        location: "实验楼601"
+        weeks: "1-16"

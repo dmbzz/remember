@@ -1,0 +1,86 @@
+# 本地模式（宿舍模式）配置
+# 形态：SQLite + 本地文件存储 + 可配置的本地转写（默认 CPU）
+# 优先级：本文件 < 环境变量（CNA_ 前缀）
+
+deployment_mode: local
+app_name: class_notes_assistant
+version: "0.1.0"
+
+# ---- 服务 ----
+host: "0.0.0.0"
+port: 8000
+log_level: INFO
+log_format: json
+
+# ---- 数据层：SQLite 落地 ./data 数据目录 ----
+db_url: "sqlite+aiosqlite:///./data/remember.db"
+db_echo: false
+
+# ---- 存储：本地文件系统 ----
+storage_backend: local_fs
+storage_root: "./data/storage"
+
+# ---- Provider 选择 ----
+transcription_provider: local_gpu
+llm_provider: cloud_llm
+vision_provider: cloud_vision
+
+# ---- 数据目录（不写死绝对路径，统一走配置）----
+obsidian_root: './data/notes'
+textbook_root: './data/textbooks'
+handoff_dir: "docs/handoff"
+
+# ---- 鉴权 / 传输：单机默认关闭 ----
+auth_enabled: false
+force_https: false
+
+# ---- 笔记多端同步（FR-31/FR-32）----
+# 本地模式：Win 为同步的发起端之一，指向云端汇聚点；只同步笔记 Markdown，冲突保留两份。
+sync:
+  enabled: true
+  endpoint: ""              # 云端汇聚点地址（本地模式留空 = 暂不同步）
+  scope: "notes_markdown"   # 只同步笔记 Markdown；转写原文/教材扫描图不预同步
+  conflict_policy: "keep_both"   # 保留两份，绝不静默覆盖
+  interval_seconds: 300     # Windows 端定时轮询 5 分钟
+
+# ---- Provider 参数 ----
+providers:
+  local_gpu:
+    model_name: "faster-whisper-medium"
+    device: "cpu"          # AMD ROCm，非 CUDA
+    compute_type: "int8"
+    language: "zh"
+    beam_size: 5
+    vad_filter: true
+  cloud_asr:
+    endpoint: ""            # 供应商与单价 M6 前确定（PRD R-02）
+    api_key: ""
+    model: "whisper-1"
+    unit_price_per_hour: 0.0
+  on_device:
+    model_name: ""
+  cloud_llm:
+    base_url: "https://api.openai.com/v1"
+    api_key: ""
+    model: "gpt-4o-mini"
+    timeout: 120.0
+    max_retries: 3
+  local_llm:
+    base_url: "http://localhost:11434/v1"   # 预留 Ollama 等本地运行时
+    api_key: "not-needed"
+    model: "qwen2.5:7b"
+    timeout: 300.0
+  cloud_vision:
+    base_url: "https://api.openai.com/v1"
+    api_key: ""
+    model: "gpt-4o-mini"
+    timeout: 180.0
+  local_vision:
+    model_name: ""
+  object_store:
+    endpoint: ""
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    region: ""
+    prefix: "classnotes/"

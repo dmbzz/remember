@@ -1,0 +1,137 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//remember//Synthetic schedule tests//EN
+X-WR-CALNAME:完全虚构的课表测试样本
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-001@example.invalid
+SUMMARY:样例课程01
+DTSTART;TZID=Asia/Shanghai:20000103T080000
+DTEND;TZID=Asia/Shanghai:20000103T094000
+RRULE:FREQ=WEEKLY;UNTIL=20000124T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-101 示例教师01
+DESCRIPTION:第1 - 2节\n虚构校区样例楼A-101\n示例教师01
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-002@example.invalid
+SUMMARY:样例课程02
+DTSTART;TZID=Asia/Shanghai:20000103T102000
+DTEND;TZID=Asia/Shanghai:20000103T120000
+RRULE:FREQ=WEEKLY;UNTIL=20000417T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-102 示例教师02
+DESCRIPTION:第3 - 4节\n虚构校区样例楼A-102\n示例教师02
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-003@example.invalid
+SUMMARY:样例课程03
+DTSTART;TZID=Asia/Shanghai:20000104T080000
+DTEND;TZID=Asia/Shanghai:20000104T094000
+RRULE:FREQ=WEEKLY;UNTIL=20000418T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-103 示例教师03
+DESCRIPTION:第1 - 2节\n虚构校区样例楼A-103\n示例教师03
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-004@example.invalid
+SUMMARY:样例课程04
+DTSTART;TZID=Asia/Shanghai:20000104T102000
+DTEND;TZID=Asia/Shanghai:20000104T120000
+RRULE:FREQ=WEEKLY;UNTIL=20000418T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-104 示例教师04
+DESCRIPTION:第3 - 4节\n虚构校区样例楼A-104\n示例教师04
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-005@example.invalid
+SUMMARY:样例课程05
+DTSTART;TZID=Asia/Shanghai:20000104T131000
+DTEND;TZID=Asia/Shanghai:20000104T145000
+RRULE:FREQ=WEEKLY;UNTIL=20000418T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-105 示例教师05
+DESCRIPTION:第5 - 6节\n虚构校区样例楼A-105\n示例教师05
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-006@example.invalid
+SUMMARY:样例课程06
+DTSTART;TZID=Asia/Shanghai:20000105T102000
+DTEND;TZID=Asia/Shanghai:20000105T120000
+RRULE:FREQ=WEEKLY;UNTIL=20000202T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-106 示例教师06
+DESCRIPTION:第3 - 4节\n虚构校区样例楼A-106\n示例教师06
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-007@example.invalid
+SUMMARY:样例课程06
+DTSTART;TZID=Asia/Shanghai:20000216T102000
+DTEND;TZID=Asia/Shanghai:20000216T120000
+RRULE:FREQ=WEEKLY;UNTIL=20000301T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-106 示例教师06
+DESCRIPTION:第3 - 4节\n虚构校区样例楼A-106\n示例教师06
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-008@example.invalid
+SUMMARY:样例课程07
+DTSTART;TZID=Asia/Shanghai:20000223T080000
+DTEND;TZID=Asia/Shanghai:20000223T094000
+RRULE:FREQ=WEEKLY;UNTIL=20000322T160000Z;INTERVAL=2
+LOCATION:虚构校区样例楼A-107 示例教师07
+DESCRIPTION:第1 - 2节\n虚构校区样例楼A-107\n示例教师07
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-009@example.invalid
+SUMMARY:样例课程08
+DTSTART;TZID=Asia/Shanghai:20000106T080000
+DTEND;TZID=Asia/Shanghai:20000106T094000
+RRULE:FREQ=WEEKLY;UNTIL=20000511T160000Z;INTERVAL=2
+LOCATION:虚构校区样例楼A-108 示例教师08
+DESCRIPTION:第1 - 2节\n虚构校区样例楼A-108\n示例教师08
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-010@example.invalid
+SUMMARY:样例课程09
+DTSTART;TZID=Asia/Shanghai:20000106T131000
+DTEND;TZID=Asia/Shanghai:20000106T145000
+RRULE:FREQ=WEEKLY;UNTIL=20000420T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-109 示例教师09
+DESCRIPTION:第5 - 6节\n虚构校区样例楼A-109\n示例教师09
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-011@example.invalid
+SUMMARY:样例课程10
+DTSTART;TZID=Asia/Shanghai:20000107T151000
+DTEND;TZID=Asia/Shanghai:20000107T165000
+RRULE:FREQ=WEEKLY;UNTIL=20000421T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-110 示例教师10
+DESCRIPTION:第7 - 8节\n虚构校区样例楼A-110\n示例教师10
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+BEGIN:VEVENT
+DTSTAMP:19991201T000000Z
+UID:synthetic-lesson-012@example.invalid
+SUMMARY:样例课程11
+DTSTART;TZID=Asia/Shanghai:20000107T181000
+DTEND;TZID=Asia/Shanghai:20000107T195000
+RRULE:FREQ=WEEKLY;UNTIL=20000421T160000Z;INTERVAL=1
+LOCATION:虚构校区样例楼A-111 示例教师11
+DESCRIPTION:第9 - 10节\n虚构校区样例楼A-111\n示例教师11
+COMMENT:Synthetic fixture; all locations people dates and IDs are fictional.
+END:VEVENT
+END:VCALENDAR

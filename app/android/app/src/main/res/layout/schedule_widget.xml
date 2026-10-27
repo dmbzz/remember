@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_host" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:clickable="false" android:focusable="false" android:importantForAccessibility="no">
+<LinearLayout
+    android:id="@android:id/background" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:clipToOutline="true" android:background="@drawable/schedule_widget_background"
+    android:orientation="vertical" android:padding="14dp" android:focusable="true">
+    <LinearLayout android:id="@+id/widget_header" android:importantForAccessibility="noHideDescendants" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <TextView android:id="@+id/widget_term" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="大二上" android:textSize="10sp" android:textColor="@color/widget_muted" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_date" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="10–14 周三" android:textSize="10sp" android:textColor="@color/widget_muted" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/widget_content" android:importantForAccessibility="noHideDescendants" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="下一节课" android:textSize="11sp" android:textColor="@color/widget_accent" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_course" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="工程力学" android:textSize="17sp" android:textStyle="bold" android:textColor="@color/widget_ink" android:includeFontPadding="false" android:maxLines="2" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_room" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="教学楼 4–402" android:textSize="12sp" android:textColor="@color/widget_muted" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_time" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="08:15–09:50" android:textSize="13sp" android:textColor="@color/widget_ink" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_footer" android:importantForAccessibility="no" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="@color/widget_muted" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
+</LinearLayout>
+</FrameLayout>
