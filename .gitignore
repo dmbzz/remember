@@ -38,3 +38,8 @@ recordings/
 *.dll
 *.zip
 .DS_Store
+
+# Application source, not user data.
+!app/lib/data/
+!server/app/providers/storage/
+
