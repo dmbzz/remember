@@ -3,8 +3,8 @@ import 'dart:io' show Platform;
 /// 应用全局常量与配置项
 class AppConstants {
   static const String appName = 'remember';
-  static const String appVersion = '0.1.37';
-  static const int appVersionCode = 38;
+  static const String appVersion = '1.0.1';
+  static const int appVersionCode = 39;
 
   /// 默认后端地址（**按平台**取，不能写死一个）。
   ///
@@ -40,3 +40,4 @@ class AppConstants {
   static const String markerCourseware = '◉课件';
   static const String markerTextbook = '◉教材';
 }
+

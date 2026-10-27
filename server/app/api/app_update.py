@@ -12,11 +12,11 @@ __all__ = ["router"]
 
 router = APIRouter(tags=["app_update"])
 
-CURRENT_APP_VERSION = "0.1.37"
-CURRENT_APP_VERSION_CODE = 38
+CURRENT_APP_VERSION = "1.0.1"
+CURRENT_APP_VERSION_CODE = 39
 RELEASE_NOTES = (
-    "1. 正式更名 remember，统一采用复习折页品牌图标\n"
-    "2. 更新启动器、窗口、通知、小组件及网页品牌，保留笔记、录音和配对数据"
+    "1. 版本号更新至 1.0.1\n"
+    "2. 更新项目介绍与界面展示，保留课表、笔记和录音功能"
 )
 
 APK_PATH = Path(__file__).resolve().parent.parent.parent.parent / "remember.apk"
@@ -47,3 +47,4 @@ async def download_app_apk():
         filename="remember_latest.apk",
         media_type="application/vnd.android.package-archive",
     )
+

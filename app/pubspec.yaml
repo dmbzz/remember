@@ -1,7 +1,7 @@
 name: class_notes_assistant
 description: "remember · 课表、笔记与课堂录音（Windows + Android）"
 publish_to: "none"
-version: 0.1.37+38
+version: 1.0.1+39
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -42,3 +42,4 @@ flutter:
           weight: 400
         - asset: assets/fonts/NotoSansSC-Semibold.ttf
           weight: 600
+

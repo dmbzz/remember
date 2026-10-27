@@ -48,8 +48,8 @@ async def test_check_app_version_has_update(update_client: AsyncClient):
     assert res.status_code == 200
     data = res.json()
     assert data["code"] == 0
-    assert data["data"]["version"] == "0.1.37"
-    assert data["data"]["version_code"] == 38
+    assert data["data"]["version"] == "1.0.1"
+    assert data["data"]["version_code"] == 39
     assert data["data"]["has_update"] is True
     assert data["data"]["download_url"] == "/api/app/download"
     assert "笔记" in data["data"]["release_notes"]
@@ -58,7 +58,7 @@ async def test_check_app_version_has_update(update_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_check_app_version_already_latest(update_client: AsyncClient):
     """测试客户端已是最新版本时返回 has_update=False。"""
-    res = await update_client.get("/api/app/version?current_code=38")
+    res = await update_client.get("/api/app/version?current_code=39")
     assert res.status_code == 200
     data = res.json()
     assert data["code"] == 0
@@ -102,3 +102,4 @@ async def test_web_icon_paths_are_served(update_client: AsyncClient):
         response = await update_client.get("/static/" + icon["src"].split("/")[-1])
         assert response.status_code == 200
         assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+
