@@ -44,7 +44,7 @@ async def update_client(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_check_app_version_has_update(update_client: AsyncClient):
     """测试客户端版本低于服务端时返回 has_update=True。"""
-    res = await update_client.get("/api/app/version?current_code=1")
+    res = await update_client.get("/api/app/version?current_code=38")
     assert res.status_code == 200
     data = res.json()
     assert data["code"] == 0
