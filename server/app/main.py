@@ -25,8 +25,9 @@ from app.db.session import get_database
 from app.deps import get_task_queue
 from app.errors import register_exception_handlers
 from app.logging_setup import RequestIdMiddleware, get_logger, setup_logging
-from app.services.pairing_service import PairingService
 from app.services.asr_jobs import AsrDispatcher
+from app.services.pairing_discovery import PairingDiscovery
+from app.services.pairing_service import PairingService
 from app.services.upload_progress import UploadProgressMiddleware
 
 __all__ = ["create_app", "app"]
@@ -75,9 +76,21 @@ async def lifespan(application: FastAPI):
     if db_ready:
         await dispatcher.start()
 
+    discovery = getattr(application.state, "pairing_discovery", None)
+    if discovery is not None:
+        if await discovery.start():
+            log.info("pairing_discovery_started", port=config.pairing_discovery_port)
+        else:
+            log.warning("pairing_discovery_bind_failed", port=config.pairing_discovery_port)
+
     try:
         yield
     finally:
+        if discovery is not None:
+            await discovery.stop()
+        from app.services.asr_model_manager import stop_model_operations
+        from starlette.concurrency import run_in_threadpool
+        await run_in_threadpool(stop_model_operations)
         await dispatcher.stop()
         await queue.stop()
         await database.dispose()
@@ -90,14 +103,18 @@ def create_app() -> FastAPI:
     setup_logging(level=config.log_level, fmt=config.log_format)
 
     application = FastAPI(
-        title="remember API",
-        description="remember —— 课表、笔记与课堂录音服务",
+        title="Remember API",
+        description="Remember —— 课表、笔记与课堂录音服务",
         version=config.version,
         lifespan=lifespan,
     )
     if config.deployment_mode == "local":
         pairing = PairingService(config.resolved_pairing_state_path, config.port)
         application.state.pairing_service = pairing
+        if config.pairing_discovery_enabled:
+            application.state.pairing_discovery = PairingDiscovery(
+                pairing, config.pairing_discovery_port
+            )
         application.add_middleware(LanPairingMiddleware, pairing=pairing)
 
     # 中间件顺序：先加鉴权（内层），后加请求 ID（外层），
@@ -122,7 +139,7 @@ def create_app() -> FastAPI:
         from fastapi.responses import FileResponse, HTMLResponse
         if static_index.exists():
             return FileResponse(static_index)
-        return HTMLResponse("<h1>remember</h1><p><a href='/docs'>Swagger API Docs</a></p>")
+        return HTMLResponse("<h1>Remember</h1><p><a href='/docs'>Swagger API Docs</a></p>")
 
     return application
 

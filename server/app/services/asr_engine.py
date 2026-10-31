@@ -16,6 +16,7 @@ import httpx
 
 from app.services.asr_settings import AsrSettings
 from app.services.asr_progress import update_progress
+from app.services.asr_process import ProcessTree, ProcessStopFailed, stop_owned_process
 
 
 def sha256(path: Path) -> str:
@@ -24,9 +25,14 @@ def sha256(path: Path) -> str:
 
 
 def run_process(args: list[str], log: Path, stop: threading.Event, timeout=10800) -> None:
+    if stop.is_set():
+        raise RuntimeError("转写已取消或中断，源录音保留")
     with log.open("ab") as output:
         proc = subprocess.Popen(args, stdout=output, stderr=subprocess.STDOUT,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        tree = ProcessTree(proc)
+        if hasattr(stop, 'track_process'):
+            stop.track_process(proc, tree)
         start = time.monotonic()
         try:
             while proc.poll() is None:
@@ -36,16 +42,28 @@ def run_process(args: list[str], log: Path, stop: threading.Event, timeout=10800
                 tail = log.read_bytes()[-4000:].decode("utf-8", errors="replace")
                 raise RuntimeError(f"进程退出 {proc.returncode}：{tail}")
         finally:
-            if proc.poll() is None:
-                if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
-                                   creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
-                else:
-                    proc.kill()
-            proc.wait(timeout=30)
+            # Never release the engine lock or report cancelled while any owned
+            # worker is alive. Retain handles and retry failed/timeout stop requests.
+            last_error = None
+            while True:
+                try:
+                    stop_owned_process(proc, tree)
+                    break
+                except ProcessStopFailed as exc:
+                    message = str(exc)
+                    if message != last_error:
+                        output.write(('\n' + message + '\n').encode('utf-8'))
+                        output.flush()
+                        last_error = message
+                    if hasattr(stop, 'process_stop_failed'):
+                        stop.process_stop_failed(message)
+                    time.sleep(1)
+            tree.close()
+            if hasattr(stop, 'process_exited'):
+                stop.process_exited(proc)
 
 
-def local_infer(source: Path, work: Path, cfg: AsrSettings, stop: threading.Event) -> dict:
+def local_infer(source: Path, work: Path, cfg: AsrSettings, stop: threading.Event, managed_override=None) -> dict:
     # Decode all codecs through ffmpeg; Qwen receives 16-kHz mono WAV.
     wav = work / "audio.wav"
     update_progress(work, "decoding")
@@ -59,51 +77,59 @@ def local_infer(source: Path, work: Path, cfg: AsrSettings, stop: threading.Even
     if duration <= 0:
         raise ValueError("录音为空，不能转写")
     chunks = []
-    for i in range(math.ceil(duration / 1200)):
-        offset = i * 1200
-        path, output = work / f"c{i:03}.wav", work / f"c{i:03}.json"
+    managed = managed_override or {}
+    if cfg.managed_id and not managed:
+        from app.services.asr_model_manager import get_model_manager
+        managed = get_model_manager().receipt(cfg.managed_id)
+    chunk_seconds = 30 if managed else 1200
+    cache_prefix = ('m' + hashlib.sha256((cfg.managed_id+'|'+cfg.model_path+'|'+cfg.python_path).encode()).hexdigest()[:16] + '_') if managed else ''
+    for i in range(math.ceil(duration / chunk_seconds)):
+        offset = i * chunk_seconds
+        path, output = work / f"{cache_prefix}c{i:03}.wav", work / f"{cache_prefix}c{i:03}.json"
         if output.exists():
             data = json.loads(output.read_text("utf-8"))
             end = max((x["e"] for x in data["segments"]), default=offset)
-            if not data.get("aligned") or end < min(offset + 1200, duration) - 120:
+            if not data.get("aligned") or end < min(offset + chunk_seconds, duration) - min(120,chunk_seconds/2):
                 output.unlink()  # only this job's generated shard
         if not path.exists():
-            run_process([cfg.ffmpeg_path, "-y", "-ss", str(offset), "-i", str(wav), "-t", "1200", "-acodec", "pcm_s16le", str(path)], work / "decode.log", stop, 600)
+            run_process([cfg.ffmpeg_path, "-y", "-ss", str(offset), "-i", str(wav), "-t", str(chunk_seconds), "-acodec", "pcm_s16le", str(path)], work / "decode.log", stop, 600)
         chunks.append({"audio": str(path), "output": str(output), "offset": offset})
     request = work / "request.json"
     try:
         progress = json.loads((work / "progress.json").read_text("utf-8"))
     except (OSError, ValueError):
         progress = {}
-    progress_request = {"progress_path": str(work / "progress.json"), "generation": progress.get("generation"), "progress_phase": "transcribing"}
+    progress_request = {"progress_path": str(work / "progress.json"), "generation": progress.get("generation"), "progress_phase": "transcribing", "managed": bool(managed), "gpu_index": managed.get('gpu_index',0)}
     request.write_text(json.dumps({"chunks": chunks, "model_path": cfg.model_path, "aligner_path": cfg.aligner_path, **progress_request}, ensure_ascii=False), "utf-8")
-    worker = Path(__file__).with_name("qwen_worker.py")
+    worker = Path(__file__).with_name("whisper_worker.py" if cfg.mode=='local_whisper' else "qwen_worker.py")
+    preferred = 'cpu' if managed.get('device')=='cpu' else 'cuda'
+    python_command = [cfg.python_path] + (['-I','-X','utf8'] if managed else [])
     try:
-        run_process([cfg.python_path, str(worker), str(request), "cuda"], work / "qwen-gpu.log", stop)
+        run_process([*python_command, str(worker), str(request), preferred], work / "qwen-gpu.log", stop)
     except RuntimeError:
-        if stop.is_set():
+        if stop.is_set() or preferred=='cpu':
             raise
         # One fallback, same Qwen model; never install or substitute another engine.
         update_progress(work, "cpu_fallback")
-        run_process([cfg.python_path, str(worker), str(request), "cpu"], work / "qwen-cpu.log", stop)
+        run_process([*python_command, str(worker), str(request), "cpu"], work / "qwen-cpu.log", stop)
     values = [json.loads(Path(x["output"]).read_text("utf-8")) for x in chunks]
     segments = sorted([s for v in values for s in v["segments"]], key=lambda x: x["s"])
     last = max((x["e"] for x in segments), default=0)
     if last < duration - 120 and not stop.is_set():
         # Tail rescue retains the existing overlap and repetition filters.
         offset = max(0, last - 60)
-        path, output = work / "tail.wav", work / "tail.json"
+        path, output = work / f"{cache_prefix}tail.wav", work / f"{cache_prefix}tail.json"
         if output.exists():
             output.unlink()
         run_process([cfg.ffmpeg_path, "-y", "-ss", str(offset), "-i", str(wav), "-acodec", "pcm_s16le", str(path)], work / "decode.log", stop, 600)
         update_progress(work, "tail")
         request.write_text(json.dumps({"chunks": [{"audio": str(path), "output": str(output), "offset": offset}], "model_path": cfg.model_path, "aligner_path": cfg.aligner_path, **progress_request, "progress_phase": "tail"}, ensure_ascii=False), "utf-8")
         try:
-            run_process([cfg.python_path, str(worker), str(request), "cuda"], work / "tail.log", stop)
+            run_process([*python_command, str(worker), str(request), preferred], work / "tail.log", stop)
         except RuntimeError:
-            if stop.is_set():
+            if stop.is_set() or preferred=='cpu':
                 raise
-            run_process([cfg.python_path, str(worker), str(request), "cpu"], work / "tail-cpu.log", stop)
+            run_process([*python_command, str(worker), str(request), "cpu"], work / "tail-cpu.log", stop)
         tail = json.loads(output.read_text("utf-8"))
         from collections import Counter
         norm = lambda t: re.sub(r"[\W_]+", "", t)
@@ -115,10 +141,12 @@ def local_infer(source: Path, work: Path, cfg: AsrSettings, stop: threading.Even
                 segments.append(s)
                 previous = text
         values.append(tail)
-    coverage = all(v.get("aligned") and max((s["e"] for s in v["segments"]), default=0) >= min((i + 1) * 1200, duration) - 120
+    coverage = all(v.get("aligned") and max((s["e"] for s in v["segments"]), default=0) >= min((i + 1) * chunk_seconds, duration) - min(120,chunk_seconds/2)
                    for i, v in enumerate(values[:len(chunks) - 1]))
     return {"duration": duration, "segments": segments, "aligned": all(v.get("aligned") for v in values), "coverage_complete": coverage,
-            "engine": "Qwen3-ASR-1.7B"}
+            "engine": cfg.model if managed else "Qwen3-ASR-1.7B",
+            "execution_device": ', '.join(sorted({str(v.get('device','未确认')) for v in values})),
+            "peak_vram_mb": None if any(v.get('peak_vram_mb') is None for v in values) else max((v.get('peak_vram_mb',0) for v in values),default=0)}
 
 
 async def service_infer(source: Path, cfg: AsrSettings, stop: threading.Event) -> dict:
@@ -155,9 +183,9 @@ async def service_infer(source: Path, cfg: AsrSettings, stop: threading.Event) -
             "aligned": aligned, "engine": cfg.model}
 
 
-def infer(source: Path, work: Path, cfg: AsrSettings, stop: threading.Event) -> dict:
+def infer(source: Path, work: Path, cfg: AsrSettings, stop: threading.Event, managed_override=None) -> dict:
     work.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
-    result = local_infer(source, work, cfg, stop)
+    result = local_infer(source, work, cfg, stop, managed_override)
     result["elapsed_sec"] = round(time.monotonic() - start, 2)
     return result

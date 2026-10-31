@@ -21,6 +21,7 @@ from app.services.asr_settings import load_settings, validate_settings
 from app.services.asr_lock import engine_lock
 from app.services.asr_progress import update_progress, read_progress
 from app.services.desktop_notifications import notify_asr
+from app.services.asr_task_control import JobControl, check_interrupted, begin_publish
 
 log = logging.getLogger(__name__)
 
@@ -42,8 +43,10 @@ def local_pipeline(source, work, job, generation, cached, title, cfg, stop, dura
     # and consume this same source between inference and publication.
     update_progress(work, "waiting_engine")
     with engine_lock(stop):
+        check_interrupted(stop)
         covered = existing_output(source, job, cfg, cached, work, generation, duration)
         if covered:
+            begin_publish(stop)
             return covered
         if cached.exists():
             result = json.loads(cached.read_text("utf-8"))
@@ -51,7 +54,9 @@ def local_pipeline(source, work, job, generation, cached, title, cfg, stop, dura
             if not source.is_file() or sha256(source) != job.source_sha256:
                 raise ValueError("待转写源音频不存在或已被替换")
             result = infer(source, work, cfg, stop)
+            check_interrupted(stop)
             atomic_json(cached, result)
+        begin_publish(stop)
         update_progress(work, "saving")
         return publish(source, work, generation, job.source_sha256, job.source_mtime, title, result, cfg)
 
@@ -87,11 +92,19 @@ class AsrDispatcher:
         self.wake = asyncio.Event()
         self.stop_event = threading.Event()
         self.task = None
+        self.mutations = asyncio.Lock()
+        self.active = {}
 
     async def start(self):
         # A server exit never loses a persisted job. No scan/backfill of old audio.
         async with self.database.session_scope() as s:
             await s.execute(update(AsrJob).where(AsrJob.status == "running").values(status="queued"))
+            interrupted = (await s.scalars(select(AsrJob).where(AsrJob.status == "cancelling"))).all()
+            for job in interrupted:
+                job.status, job.error, job.finished_at = "cancelled", "已取消转写，源录音保留", datetime.now()
+                rec = await s.get(Recording, job.recording_id)
+                if rec and rec.file_path == job.source_path:
+                    rec.transcription_status = "pending"
         self.task = asyncio.create_task(self.run(), name="qwen-asr-dispatcher")
 
     async def stop(self):
@@ -120,29 +133,44 @@ class AsrDispatcher:
                 pass
 
     async def execute(self, ident):
+        control = JobControl(self.stop_event)
+        job = None
         try:
+            # The same gate protects API mutations and upload completion.
+            async with self.mutations:
+                if ident in self.active:
+                    return
+                async with self.database.session_scope() as s:
+                    job = await s.get(AsrJob, ident)
+                    # Direct retry calls used by recovery remain compatible; a
+                    # cancelled/deleted job can only be explicitly requeued.
+                    if not job or job.status not in ("queued", "failed", "incomplete"):
+                        return
+                    self.active[ident] = control
+                    job.status, job.started_at, job.error = "running", datetime.now(), ""
+                    rec = await s.get(Recording, job.recording_id)
+                    if not rec:
+                        raise ValueError("录音记录不存在")
+                    from app.db.models import Course
+                    course = await s.get(Course, rec.course_id)
+                    title = course.name if course else Path(job.source_path).stem
+                    rec.transcription_status = "running"
             cfg = load_settings()
             validate_settings(cfg)
-            async with self.database.session_scope() as s:
-                job = await s.get(AsrJob, ident)
-                job.status, job.started_at, job.error = "running", datetime.now(), ""
-                rec = await s.get(Recording, job.recording_id)
-                from app.db.models import Course
-                course = await s.get(Course, rec.course_id)
-                title = course.name if course else Path(job.source_path).stem
-                rec.transcription_status = "running"
             source, work = Path(job.source_path), self.work_root / ident
             work.mkdir(parents=True, exist_ok=True)
             update_progress(work, "preparing", generation=job.run_generation)
+            check_interrupted(control)
             await asyncio.to_thread(notify_asr, "started", source.name)
             generation = f"{ident}-r{job.run_generation}"
             cached = work / f"inference-{generation}.json"
-            if cfg.mode == "local_qwen":
-                result = await asyncio.to_thread(local_pipeline, source, work, job, generation, cached, title, cfg, self.stop_event, rec.duration_ms / 1000)
+            if cfg.mode in ("local_qwen", "local_whisper"):
+                result = await asyncio.to_thread(local_pipeline, source, work, job, generation, cached, title, cfg, control, rec.duration_ms / 1000)
             else:
                 start = time.monotonic()
                 covered = await asyncio.to_thread(existing_output, source, job, cfg, cached, work, generation, rec.duration_ms / 1000)
                 if covered:
+                    control.begin_publish()
                     result = covered
                 else:
                     if cached.exists():
@@ -150,50 +178,69 @@ class AsrDispatcher:
                     else:
                         if not source.is_file() or await asyncio.to_thread(sha256, source) != job.source_sha256:
                             raise ValueError("待转写源音频不存在或已被替换")
+                        check_interrupted(control)
                         update_progress(work, "service")
-                        result = await service_infer(source, cfg, self.stop_event)
+                        result = await service_infer(source, cfg, control)
+                        check_interrupted(control)
                         expected = rec.duration_ms / 1000
                         if expected <= 0 or abs(result["duration"] - expected) > max(2, expected * .01):
                             result["coverage_complete"] = False
                         result["elapsed_sec"] = round(time.monotonic() - start, 2)
                         atomic_json(cached, result)
+                    control.begin_publish()
                     update_progress(work, "saving")
                     result = await asyncio.to_thread(publish, source, work, generation, job.source_sha256, job.source_mtime, title, result, cfg)
-            async with self.database.session_scope() as s:
-                current = await s.get(AsrJob, ident)
-                current.result, current.status, current.finished_at = result, "completed" if result["complete"] else "incomplete", datetime.now()
-                current.error = result.get("ledger_warning", "")
-                rec = await s.get(Recording, job.recording_id)
-                # Keep file_path/size/uploaded as the durable reception receipt for
-                # older phone clients, even after authorized PC source deletion.
-                if rec.file_path == job.source_path:
-                    rec.transcription_status = "success" if result["complete"] else "failed"
-                    if result["source_deleted"]:
-                        rec.deleted_at = datetime.now()
+            async with self.mutations:
+                # No cancellation is accepted beyond the publication barrier.
+                control.begin_publish()
+                async with self.database.session_scope() as s:
+                    current = await s.get(AsrJob, ident)
+                    current.result, current.status, current.finished_at = result, "completed" if result["complete"] else "incomplete", datetime.now()
+                    current.error = result.get("ledger_warning", "")
+                    rec = await s.get(Recording, job.recording_id)
+                    # Preserve the durable upload receipt for older phones.
+                    if rec and rec.file_path == job.source_path:
+                        rec.transcription_status = "success" if result["complete"] else "failed"
+                        if result["source_deleted"]:
+                            rec.deleted_at = datetime.now()
             if result["complete"]:
-                # Remove only generated WAVs under this job's verified work root.
-                # Keep small receipts/shards so retries don't repeat inference.
                 if not work.resolve().is_relative_to(self.work_root.resolve()):
                     raise ValueError("转写临时目录越界")
                 for generated in work.glob("*.wav"):
                     generated.unlink(missing_ok=True)
             await asyncio.to_thread(notify_asr, "completed" if result["complete"] else "incomplete", source.name)
         except Exception as exc:
-            async with self.database.session_scope() as s:
-                job = await s.get(AsrJob, ident)
-                job.status = "queued" if self.stop_event.is_set() else "failed"
-                job.error = str(exc)
-                rec = await s.get(Recording, job.recording_id)
-                if rec:
-                    rec.transcription_status = "pending" if self.stop_event.is_set() else "failed"
-            if not self.stop_event.is_set():
+            if job is None:
+                raise
+            async with self.mutations:
+                async with self.database.session_scope() as s:
+                    current = await s.get(AsrJob, ident)
+                    if not current or current.status == "deleted":
+                        return
+                    cancelled = control.cancelled.is_set() or current.status == "cancelling"
+                    current.status = "cancelled" if cancelled else "queued" if self.stop_event.is_set() else "failed"
+                    current.error = "已取消转写，源录音保留" if cancelled else str(exc)
+                    current.finished_at = datetime.now() if current.status != "queued" else None
+                    rec = await s.get(Recording, current.recording_id)
+                    if rec and rec.file_path == current.source_path:
+                        rec.transcription_status = "pending" if current.status in ("cancelled", "queued") else "failed"
+            if not self.stop_event.is_set() and not control.cancelled.is_set():
                 await asyncio.to_thread(notify_asr, "failed", Path(job.source_path).name)
+        finally:
+            if self.active.get(ident) is control:
+                self.active.pop(ident, None)
 
 
 def job_dict(job: AsrJob) -> dict:
+    progress = read_progress(job, Path(get_app_config().storage_root) / "asr-jobs")
+    source_deleted = bool((job.result or {}).get("source_deleted"))
     return {"id": job.id, "recording_id": job.recording_id, "status": job.status,
             "error": job.error, "result": job.result, "source_name": Path(job.source_path).name,
-            "progress": read_progress(job, Path(get_app_config().storage_root) / "asr-jobs"),
+            "progress": progress,
+            "can_cancel": job.status == "queued" or (job.status == "running" and progress.get("phase") != "saving"),
+            "can_delete": job.status in ("completed", "failed", "incomplete", "cancelled"),
+            "can_delete_recording": job.status in ("failed", "incomplete", "cancelled") and not source_deleted,
+            "can_retry": job.status in ("failed", "incomplete", "cancelled") and not source_deleted,
             "created_at": job.created_at.isoformat(),
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "finished_at": job.finished_at.isoformat() if job.finished_at else None}

@@ -92,10 +92,10 @@ BEGIN
             // path_provider_windows uses these two fields as the persistent
             // Application Support identity; keep the existing installation path.
             VALUE "CompanyName", "com.classnotes" "\0"
-            VALUE "FileDescription", "remember" "\0"
+            VALUE "FileDescription", "Remember" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 remember. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Remember. All rights reserved." "\0"
             VALUE "OriginalFilename", "app.exe" "\0"
             VALUE "ProductName", "app" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

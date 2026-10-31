@@ -1,5 +1,5 @@
-# remember后端依赖（Python 3.13）
-# 安装：python -m pip install -r requirements.txt
+# 课堂学习助手后端依赖（Python 3.13）
+# 安装：C:/Users/damia/.workbuddy/binaries/python/envs/default/Scripts/python.exe -m pip install -r requirements.txt
 
 # —— Web / 框架 ——
 fastapi>=0.115

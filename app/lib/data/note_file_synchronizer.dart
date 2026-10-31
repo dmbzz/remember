@@ -481,4 +481,3 @@ class NoteFileSynchronizer extends ChangeNotifier {
     super.dispose();
   }
 }
-

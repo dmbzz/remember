@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,17 +60,18 @@ async def upload_recording_file(
     """单文件直接上传（针对小型录音或已在本地的录音文件）。"""
     service = RecordingService(session)
     content = await file.read()
-    rec = await service.save_direct_file(
-        recording_id=recording_id,
-        file_bytes=content,
-        filename=file.filename or "audio.aac",
-    )
-    await enqueue_uploaded(session, rec)
-    # Persist reception + queue atomically before returning the phone's receipt.
-    await session.commit()
     dispatcher = getattr(request.app.state, "asr_dispatcher", None)
-    if dispatcher:
-        dispatcher.wake.set()
+    # Serialize final source replacement and its durable receipt with task deletion.
+    async with dispatcher.mutations if dispatcher else asyncio.Lock():
+        rec = await service.save_direct_file(
+            recording_id=recording_id,
+            file_bytes=content,
+            filename=file.filename or "audio.aac",
+        )
+        await enqueue_uploaded(session, rec)
+        await session.commit()
+        if dispatcher:
+            dispatcher.wake.set()
     return ok(RecordingResponse.model_validate(rec).model_dump(), message="音频上传落地成功")
 
 
@@ -80,12 +83,13 @@ async def complete_recording_upload(
 ) -> dict:
     """所有分片上传完成后调用此接口触发服务端合并组装。"""
     service = RecordingService(session)
-    rec = await service.complete_upload(recording_id)
-    await enqueue_uploaded(session, rec)
-    await session.commit()
     dispatcher = getattr(request.app.state, "asr_dispatcher", None)
-    if dispatcher:
-        dispatcher.wake.set()
+    async with dispatcher.mutations if dispatcher else asyncio.Lock():
+        rec = await service.complete_upload(recording_id)
+        await enqueue_uploaded(session, rec)
+        await session.commit()
+        if dispatcher:
+            dispatcher.wake.set()
     return ok(RecordingResponse.model_validate(rec).model_dump(), message="音频组装完成")
 
 

@@ -120,11 +120,13 @@ class AudioRecordService : Service() {
     }
 
     fun startAutomatic(courseName: String, courseId: String, sessionId: String): Boolean {
-        if (!isArmed || isRecording) return false
+        if (!isArmed || isRecording || AutoRecordAlarmStore.wasStarted(this, sessionId)) return false
         currentCourseName = courseName
         currentCourseId = courseId
         val file = RecordingRepository(this).createAudioFile(sessionId, "aac")
-        return start(sessionId, file)
+        val started = start(sessionId, file)
+        if (started) AutoRecordAlarmStore.markStarted(this, sessionId)
+        return started
     }
 
     private fun showForeground(notification: Notification) {

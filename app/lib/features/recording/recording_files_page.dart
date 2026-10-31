@@ -5,11 +5,13 @@ import '../../core/shapes.dart';
 import '../../core/orientation_capsule.dart';
 
 import '../../data/api_client.dart';
-import '../../core/course_palette.dart';
+import '../../core/motion.dart';
 import '../../data/upload_queue.dart';
 import '../asr/asr_job_card.dart';
 import '../asr/asr_settings_entry.dart';
-import 'reception_progress.dart';
+import 'recent_records.dart';
+import 'recording_history_page.dart';
+import '../asr/asr_jobs_page.dart';
 
 /// 桌面端（Windows）「录音」标签页。
 ///
@@ -38,6 +40,8 @@ class _RecordingFilesPageState extends State<RecordingFilesPage> {
   String? _asrError;
   String? _receivedError;
   bool _loading = false;
+  int _loadEpoch = 0;
+  int _asrSnapshotRevision = 0;
   bool _hasLoaded = false;
   Timer? _refreshTimer;
 
@@ -54,8 +58,9 @@ class _RecordingFilesPageState extends State<RecordingFilesPage> {
     });
   }
 
-  Future<void> _loadReceived() async {
-    if (_loading) return;
+  Future<void> _loadReceived({bool force = false}) async {
+    if (_loading && !force) return;
+    final epoch = ++_loadEpoch;
     setState(() => _loading = true);
     final results = await Future.wait([
       widget.apiClient.getRecordings(),
@@ -67,21 +72,24 @@ class _RecordingFilesPageState extends State<RecordingFilesPage> {
       for (final course in results[1].data ?? <Map<String, dynamic>>[])
         '${course['id']}': '${course['name']}'
     };
-    if (!mounted) return;
+    if (!mounted || epoch != _loadEpoch) return;
     setState(() {
       if (result.ok) {
-        _received = (result.data ?? [])
+        _received = newestRecords((result.data ?? [])
             .map((rec) => {
                   ...rec,
                   'course_name': rec['course_name'] ??
                       names['${rec['course_id']}'] ??
                       rec['course_id']
                 })
-            .toList();
+            .toList());
       }
       _receivedError = result.error;
       _asrError = results[2].error;
-      if (results[2].ok) _asrJobs = results[2].data!;
+      if (results[2].ok) {
+        _asrJobs = newestRecords(results[2].data!);
+        _asrSnapshotRevision = epoch;
+      }
       _loading = false;
       _hasLoaded = true;
     });
@@ -142,8 +150,17 @@ class _RecordingFilesPageState extends State<RecordingFilesPage> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text('电脑收到的录音',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          RecentRecordsHeader(
+              title: '最近接收记录',
+              hiddenActive: _received
+                  .skip(recentRecordLimit)
+                  .where((r) => r['upload_status'] != 'uploaded')
+                  .length,
+              onAll: () async {
+                await Navigator.of(context).push(studyReadingRoute(context,
+                    (_) => RecordingsHistoryPage(apiClient: widget.apiClient)));
+                if (mounted) await _loadReceived(force: true);
+              }),
           SizedBox(
               height: 4,
               child: _loading ? const LinearProgressIndicator() : null),
@@ -152,45 +169,46 @@ class _RecordingFilesPageState extends State<RecordingFilesPage> {
             const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
                 child: Text('电脑尚未收到录音')),
-          for (final rec in _received)
-            Card(
-                shape: RoundedRectangleBorder(
-                    borderRadius: StudyShapes.cardBorder,
-                    side: BorderSide(
-                        color:
-                            CoursePalette.of(context, "${rec['course_name']}")
-                                .line)),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ListTile(
-                        leading: Icon(rec['upload_status'] == 'uploaded'
-                            ? Icons.check_circle_outline
-                            : Icons.cloud_upload_outlined),
-                        title: Text(
-                            '${rec['course_name'] ?? rec['course_id'] ?? '录音'}'),
-                        subtitle: Text(
-                            '${rec['upload_status'] == 'uploaded' ? '已保存到电脑' : '手机录音同步'} · ${((rec['size_bytes'] as num? ?? 0) / 1048576).toStringAsFixed(1)} MB\n${rec['file_path'] ?? ''}'),
-                      ),
-                      ReceptionProgress(recording: rec)
-                    ])),
+          for (final rec in _received.take(recentRecordLimit))
+            ReceivedRecordingCard(recording: rec),
           const SizedBox(height: 16),
-          Text('ASR 转写进度', style: Theme.of(context).textTheme.titleMedium),
+          RecentRecordsHeader(
+              title: '最近转写任务',
+              hiddenActive: _asrJobs
+                  .skip(recentRecordLimit)
+                  .where((j) =>
+                      ['running', 'queued', 'cancelling'].contains(j['status']))
+                  .length,
+              onAll: () async {
+                await Navigator.of(context).push(studyReadingRoute(
+                    context, (_) => AsrJobsPage(apiClient: widget.apiClient)));
+                if (mounted) await _loadReceived(force: true);
+              }),
           if (_asrError != null) Text('转写状态刷新失败：$_asrError'),
           if (_asrJobs.isEmpty && _asrError == null) const Text('暂无转写任务'),
-          for (final job in _asrJobs.take(10)) AsrJobCard(job: job),
+          for (final job in _asrJobs.take(recentRecordLimit))
+            AsrJobCard(
+                key: ValueKey('asr-${job['id']}'),
+                job: job,
+                apiClient: widget.apiClient,
+                snapshotRevision: _asrSnapshotRevision,
+                refreshSnapshot: () async {
+                  await _loadReceived(force: true);
+                  return _loadEpoch;
+                }),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Icon(Icons.cloud_upload_outlined,
-                  size: 20, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: Text('本电脑上传队列（${_items.length}）',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15))),
-            ],
-          ),
+          RecentRecordsHeader(
+              title: '最近本电脑上传记录',
+              hiddenActive: newestUploads(_items)
+                  .skip(recentRecordLimit)
+                  .where((e) =>
+                      e.status == UploadStatus.pending ||
+                      e.status == UploadStatus.uploading)
+                  .length,
+              onAll: () => Navigator.of(context).push(studyReadingRoute(
+                  context,
+                  (_) => UploadHistoryPage(
+                      queue: widget.uploadQueue, desktopActions: true)))),
           const SizedBox(height: 8),
           if (_items.isEmpty)
             Padding(
@@ -208,85 +226,14 @@ class _RecordingFilesPageState extends State<RecordingFilesPage> {
               ),
             )
           else
-            ..._items.map(_buildItem),
+            for (final item in newestUploads(_items).take(recentRecordLimit))
+              UploadRecordCard(
+                  key: ValueKey(item.id),
+                  item: item,
+                  queue: widget.uploadQueue,
+                  desktopActions: true),
         ],
       ),
     );
-  }
-
-  Widget _buildItem(UploadItem item) {
-    final (label, color, icon) = _statusStyle(item.status);
-    final fileName = item.filePath.split(RegExp(r'[\\/]')).last;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(fileName.isEmpty ? item.filePath : fileName,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis),
-                ),
-                Chip(
-                  label: Text(label,
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 11)),
-                  backgroundColor: color,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text('课程：${item.courseId} ｜ 第${item.lesson}课 ｜ ${item.classDate}',
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            if (item.status == UploadStatus.uploading) ...[
-              const SizedBox(height: 8),
-              LinearProgressIndicator(value: item.progress / 100.0),
-            ],
-            if (item.error != null && item.error!.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text('错误：${item.error}',
-                  style: TextStyle(fontSize: 12, color: Colors.red.shade700)),
-            ],
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (item.status == UploadStatus.failed)
-                  TextButton.icon(
-                    onPressed: () => widget.uploadQueue.retry(item.id),
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('重试'),
-                  ),
-                TextButton.icon(
-                  onPressed: () => widget.uploadQueue.remove(item.id),
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('移除'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  (String, Color, IconData) _statusStyle(UploadStatus status) {
-    switch (status) {
-      case UploadStatus.pending:
-        return ('待上传', Colors.orange.shade700, Icons.schedule);
-      case UploadStatus.uploading:
-        return ('上传中', Colors.blue.shade700, Icons.cloud_upload);
-      case UploadStatus.completed:
-        return ('已完成', Colors.green.shade700, Icons.check_circle);
-      case UploadStatus.failed:
-        return ('失败', Colors.red.shade700, Icons.error_outline);
-    }
   }
 }

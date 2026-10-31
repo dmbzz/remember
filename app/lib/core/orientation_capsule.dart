@@ -7,6 +7,34 @@ import 'package:flutter/services.dart';
 
 import 'glass_navigation.dart';
 
+/// Keep ink on the selection contour without changing the button's hit target.
+/// InkHighlight retains this callback while a pointer hovers or stays pressed,
+/// so read the current geometry at paint time instead of capturing a pose.
+class _LensInkWell extends InkWell {
+  const _LensInkWell({
+    super.key,
+    required this.lensSize,
+    required super.child,
+    required super.onTap,
+    super.focusNode,
+    super.onFocusChange,
+    super.customBorder,
+    super.splashFactory,
+    super.overlayColor,
+  });
+
+  final ValueGetter<Size> lensSize;
+
+  @override
+  RectCallback getRectCallback(RenderBox referenceBox) => () {
+        final size = lensSize();
+        return Rect.fromCenter(
+            center: referenceBox.size.center(Offset.zero),
+            width: size.width,
+            height: size.height);
+      };
+}
+
 /// Local clearance for form/list pages under the floating desktop Dock.
 /// Uses its fully expanded envelope: hovering never moves a field or button.
 /// This reserves no shell layer and is intentionally not used by the timetable.
@@ -304,6 +332,7 @@ class _StudyTouchNavigationLayoutState extends State<StudyTouchNavigationLayout>
   late final _itemKeys =
       List.generate(widget.destinations.length, (_) => GlobalKey());
   bool _revealScheduled = false;
+  Size _inkLensSize = Size.zero;
 
   @override
   void initState() {
@@ -508,6 +537,7 @@ class _StudyTouchNavigationLayoutState extends State<StudyTouchNavigationLayout>
                 count: widget.destinations.length,
                 desktop: widget.desktopNavigation,
                 railExpansion: Curves.easeOutCubic.transform(_expansion.value));
+            _inkLensSize = g.lensSize;
             final formLeading = widget.desktopNavigation
                 ? (ArcCapsuleGeometry.calculate(
                                 viewport: constraints.biggest,
@@ -612,73 +642,57 @@ class _StudyTouchNavigationLayoutState extends State<StudyTouchNavigationLayout>
                                                                           side:
                                                                               BorderSide(color: theme.colorScheme.primary.withOpacity(.23))),
                                                                       color: MediaQuery.highContrastOf(context) ? theme.colorScheme.primaryContainer : theme.colorScheme.primary.withOpacity(.12))))),
-                                                      for (var i = 0;
-                                                          i <
-                                                              widget
-                                                                  .destinations
-                                                                  .length;
-                                                          i++)
-                                                        Positioned.fromRect(
-                                                            rect: Rect.fromCenter(
-                                                                center: g
-                                                                    .centers[i],
-                                                                width: g
-                                                                    .itemSize
-                                                                    .width,
-                                                                height: g
-                                                                    .itemSize
-                                                                    .height),
-                                                            child: Semantics(
-                                                                onTap: () => widget
-                                                                    .onSelected(
-                                                                        i),
-                                                                button: true,
-                                                                selected: i ==
-                                                                    widget
-                                                                        .selectedIndex,
-                                                                label: widget
-                                                                    .destinations[
-                                                                        i]
-                                                                    .$3,
-                                                                excludeSemantics: true,
-                                                                child: Material(
-                                                                  key: ValueKey(
-                                                                      'capsule-item-$i'),
-                                                                  color: Colors
-                                                                      .transparent,
-                                                                  child: InkWell(
-                                                                      key: _itemKeys[i],
-                                                                      focusNode: _focusNodes[i],
-                                                                      onFocusChange: (focused) {
-                                                                        if (focused &&
-                                                                            _keyboardInput) {
-                                                                          _revealFocused(
-                                                                              i);
-                                                                        }
-                                                                      },
-                                                                      onTap: () => widget.onSelected(i),
-                                                                      customBorder: const StadiumBorder(),
-                                                                      splashFactory: NoSplash.splashFactory,
-                                                                      overlayColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.pressed) || states.contains(WidgetState.focused) ? theme.colorScheme.primary.withOpacity(.12) : null),
-                                                                      child: Stack(clipBehavior: Clip.none, children: [
-                                                                        Positioned(
-                                                                            left: g.itemSize.width / 2 +
-                                                                                g.iconOffset.dx -
-                                                                                12,
-                                                                            top: g.itemSize.height / 2 + g.iconOffset.dy - 12,
-                                                                            width: 24,
-                                                                            height: 24,
-                                                                            child: Icon(i == widget.selectedIndex ? widget.destinations[i].$2 : widget.destinations[i].$1, size: 23, color: i == widget.selectedIndex ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)),
-                                                                        Positioned(
-                                                                            left: g.itemSize.width / 2 +
-                                                                                g.labelOffset.dx -
-                                                                                labelSize.width / 2,
-                                                                            top: g.itemSize.height / 2 + g.labelOffset.dy - labelSize.height / 2,
-                                                                            width: labelSize.width,
-                                                                            height: labelSize.height,
-                                                                            child: Opacity(opacity: widget.desktopNavigation ? 1 - ArcCapsuleGeometry._part(_orientation.value, .86, 1) * (1 - Curves.easeOutCubic.transform(_expansion.value)) : 1, child: Text(widget.destinations[i].$3, textAlign: TextAlign.center, maxLines: 1, softWrap: false, style: labelStyle.copyWith(color: i == widget.selectedIndex ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)))),
-                                                                      ])),
-                                                                ))),
+                                                      // A shared ink canvas can paint the full lens;
+                                                      // per-item Materials clip ink to the smaller hit box.
+                                                      Positioned.fill(
+                                                        child: Material(
+                                                          key: const ValueKey(
+                                                              'navigation-ink-canvas'),
+                                                          color: Colors
+                                                              .transparent,
+                                                          child: Stack(
+                                                            clipBehavior:
+                                                                Clip.none,
+                                                            children: [
+                                                              for (var i = 0;
+                                                                  i <
+                                                                      widget
+                                                                          .destinations
+                                                                          .length;
+                                                                  i++)
+                                                                Positioned.fromRect(
+                                                                    rect: Rect.fromCenter(center: g.centers[i], width: g.itemSize.width, height: g.itemSize.height),
+                                                                    child: Semantics(
+                                                                        onTap: () => widget.onSelected(i),
+                                                                        button: true,
+                                                                        selected: i == widget.selectedIndex,
+                                                                        label: widget.destinations[i].$3,
+                                                                        excludeSemantics: true,
+                                                                        child: SizedBox(
+                                                                          key: ValueKey(
+                                                                              'capsule-item-$i'),
+                                                                          child: _LensInkWell(
+                                                                              lensSize: () => _inkLensSize,
+                                                                              key: _itemKeys[i],
+                                                                              focusNode: _focusNodes[i],
+                                                                              onFocusChange: (focused) {
+                                                                                if (focused && _keyboardInput) {
+                                                                                  _revealFocused(i);
+                                                                                }
+                                                                              },
+                                                                              onTap: () => widget.onSelected(i),
+                                                                              customBorder: const StadiumBorder(),
+                                                                              splashFactory: NoSplash.splashFactory,
+                                                                              overlayColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.pressed) || states.contains(WidgetState.focused) ? theme.colorScheme.primary.withOpacity(.12) : null),
+                                                                              child: Stack(clipBehavior: Clip.none, children: [
+                                                                                Positioned(left: g.itemSize.width / 2 + g.iconOffset.dx - 12, top: g.itemSize.height / 2 + g.iconOffset.dy - 12, width: 24, height: 24, child: Icon(i == widget.selectedIndex ? widget.destinations[i].$2 : widget.destinations[i].$1, size: 23, color: i == widget.selectedIndex ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)),
+                                                                                Positioned(left: g.itemSize.width / 2 + g.labelOffset.dx - labelSize.width / 2, top: g.itemSize.height / 2 + g.labelOffset.dy - labelSize.height / 2, width: labelSize.width, height: labelSize.height, child: Opacity(opacity: widget.desktopNavigation ? 1 - ArcCapsuleGeometry._part(_orientation.value, .86, 1) * (1 - Curves.easeOutCubic.transform(_expansion.value)) : 1, child: Text(widget.destinations[i].$3, textAlign: TextAlign.center, maxLines: 1, softWrap: false, style: labelStyle.copyWith(color: i == widget.selectedIndex ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)))),
+                                                                              ])),
+                                                                        ))),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
                                                     ])),
                                           ),
                                         ))),

@@ -109,6 +109,7 @@ class PairingService:
             pin = self._pin(now // self._code_seconds)
             addresses = self.lan_addresses()
             return {
+                **self.public_identity(),
                 "code": pin,
                 "expires_in_seconds": self._code_seconds - now % self._code_seconds,
                 "addresses": addresses,
@@ -116,16 +117,46 @@ class PairingService:
                 "paired_devices": len(self._load()["tokens"]),
             }
 
-    def exchange(self, code: str, device_name: str, client_host: str) -> str:
+    def public_identity(self) -> dict[str, Any]:
+        """可公开发现的电脑身份；不包含 PIN、密钥或设备令牌。"""
         with self._lock:
-            now = time.monotonic()
-            attempts = [at for at in self._attempts.get(client_host, []) if now - at < 300]
-            if len(attempts) >= self._max_attempts:
-                raise PairingError("尝试次数过多，请五分钟后重试", 429)
+            server_id = hmac.new(
+                bytes.fromhex(self._load()["secret"]), b"pairing-server-id-v1", hashlib.sha256
+            ).hexdigest()[:16]
+            name = "".join(char for char in socket.gethostname() if char.isprintable())[:64]
+            return {"server_id": server_id, "name": name or "Remember", "port": self._port}
+
+    def _validate_code(self, code: str, client_host: str, server_id: str | None) -> None:
+        """resolve 与 exchange 共用错误次数；正确探测不占用剩余配额。"""
+        now = time.monotonic()
+        attempts = [at for at in self._attempts.get(client_host, []) if now - at < 300]
+        if len(attempts) >= self._max_attempts:
+            raise PairingError("尝试次数过多，请五分钟后重试", 429)
+        pin_matches = code.isascii() and hmac.compare_digest(
+            code, self._pin(int(time.time()) // self._code_seconds)
+        )
+        identity_matches = server_id is None or (
+            server_id.isascii()
+            and hmac.compare_digest(server_id, self.public_identity()["server_id"])
+        )
+        if not pin_matches or not identity_matches:
             attempts.append(now)
             self._attempts[client_host] = attempts
-            if not hmac.compare_digest(code, self._pin(int(time.time()) // self._code_seconds)):
-                raise PairingError("连接码错误或已过期", 403)
+            raise PairingError("连接码错误或已过期", 403)
+
+    def resolve(
+        self, code: str, client_host: str, server_id: str | None = None
+    ) -> dict[str, Any]:
+        """验证短码并确认电脑身份，不创建令牌或保存配对状态。"""
+        with self._lock:
+            self._validate_code(code, client_host, server_id)
+            return self.public_identity()
+
+    def exchange(
+        self, code: str, device_name: str, client_host: str, server_id: str | None = None
+    ) -> str:
+        with self._lock:
+            self._validate_code(code, client_host, server_id)
             token = secrets.token_urlsafe(32)
             token_hash = hashlib.sha256(token.encode()).hexdigest()
             self._load()["tokens"][token_hash] = {

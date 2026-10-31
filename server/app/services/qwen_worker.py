@@ -1,5 +1,6 @@
 """Standalone worker: run ONLY with configured Qwen Python. No application imports."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -40,12 +41,19 @@ def main(request_path, device):
             print('Progress update unavailable; inference continues', file=sys.stderr, flush=True)
     phase = request.get("progress_phase", "transcribing")
     progress("tail" if phase == "tail" else "loading")
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    dev = "cuda:0" if device == "cuda" else "cpu"
+    managed = request.get('managed',False)
+    if managed: torch.set_num_threads(max(1,min(4,os.cpu_count() or 1)))
+    dtype = (torch.float16 if managed else torch.bfloat16) if device == "cuda" else torch.float32
+    dev = f"cuda:{request.get('gpu_index',0)}" if device == "cuda" else "cpu"
+    if device == 'cuda':
+        # ROCm/CUDA memory statistics require an initialized device allocator.
+        # is_available() alone does not initialize it on the Windows ROCm runtime.
+        torch.cuda.set_device(request.get('gpu_index', 0))
+        torch.cuda.reset_peak_memory_stats(request.get('gpu_index', 0))
     model = Qwen3ASRModel.from_pretrained(
         request["model_path"], forced_aligner=request["aligner_path"],
-        forced_aligner_kwargs=dict(dtype=dtype, device_map=dev),
-        dtype=dtype, device_map=dev, max_inference_batch_size=4 if device == "cuda" else 1,
+        forced_aligner_kwargs=dict(dtype=torch.float32 if managed else dtype, device_map='cpu' if managed else dev),
+        dtype=dtype, device_map=dev, max_inference_batch_size=1 if managed else 4 if device == "cuda" else 1,
         max_new_tokens=2048,
     )
     for index, chunk in enumerate(request["chunks"]):
@@ -60,7 +68,8 @@ def main(request_path, device):
         # Text without alignment is retained, but cannot authorize source deletion.
         if not segs and result.text.strip():
             segs = [{"s": chunk["offset"], "e": chunk["offset"], "t": result.text.strip()}]
-        payload = {"segments": segs, "aligned": bool(stamps), "device": device}
+        payload = {"segments": segs, "aligned": bool(stamps), "device": device,
+                   "peak_vram_mb":round(torch.cuda.max_memory_allocated(request.get('gpu_index',0))/1024**2,1) if device=='cuda' else 0}
         temp = output.with_suffix(".tmp")
         temp.write_text(json.dumps(payload, ensure_ascii=False), "utf-8")
         temp.replace(output)

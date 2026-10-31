@@ -19,6 +19,7 @@ from app.api import (
     app_update,
     pairing,
     asr,
+    asr_models,
 )
 
 __all__ = ["api_router"]
@@ -33,6 +34,7 @@ api_router.include_router(profile.router)
 api_router.include_router(schedule.router)
 api_router.include_router(recordings.router)
 api_router.include_router(asr.router)
+api_router.include_router(asr_models.router)
 api_router.include_router(transcription.router)
 api_router.include_router(notes.router)
 api_router.include_router(textbooks.router)

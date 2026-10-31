@@ -111,7 +111,7 @@ object CourseReminderScheduler {
         try { manager.notify(id.hashCode(), notification) } catch (_: SecurityException) { }
     }
     fun test(context: Context) {
-        require(NotificationManagerCompat.from(context).areNotificationsEnabled()) { "请先在通知设置中允许 remember 发送通知" }
+        require(NotificationManagerCompat.from(context).areNotificationsEnabled()) { "请先在通知设置中允许 Remember 发送通知" }
         val next = plan(context).firstOrNull()
         val now = System.currentTimeMillis()
         show(context, "course_test", next?.course?.name ?: "课程通知测试", next?.course?.location ?: "教室示例 A-101",

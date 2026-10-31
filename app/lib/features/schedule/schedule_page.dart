@@ -185,7 +185,7 @@ class _SchedulePageState extends State<SchedulePage>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(accepted
               ? '请在桌面的系统提示中确认添加'
-              : '桌面长按 → 添加小部件 → 安卓小部件 → remember·课表')));
+              : '桌面长按 → 添加小部件 → 安卓小部件 → Remember·课表')));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)

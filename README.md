@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="docs/brand/remember.png" width="104" alt="remember 图标">
+  <img src="docs/brand/remember.png" width="104" alt="Remember 图标">
 </p>
 
-<h1 align="center">remember</h1>
+<h1 align="center">Remember</h1>
 
 <p align="center"><strong>课表、课堂录音和笔记，都有一个可以回来的地方。</strong></p>
 
-<p align="center">Android · Windows &nbsp; | &nbsp; 当前版本 1.0.1</p>
+<p align="center">Android · Windows &nbsp; | &nbsp; 当前版本 1.0.2</p>
 
-remember 是一款面向课堂学习的工具：在手机上查看课程、记录上课内容，回到电脑后同步录音并转写，再把笔记带在身边。它将课表、录音和阅读放在同一套工作流里，让复习时更容易找到需要的内容。
+Remember 是一款面向课堂学习的工具：在手机上查看课程、记录上课内容，回到电脑后同步录音并转写，再把笔记带在身边。它将课表、录音和阅读放在同一套工作流里，让复习时更容易找到需要的内容。
 
 ## 界面预览
 
@@ -36,7 +36,7 @@ remember 是一款面向课堂学习的工具：在手机上查看课程、记�
 
 ## 开始使用
 
-1. 在 Windows 电脑上运行 remember 及其本机后端。
+1. 在 Windows 电脑上运行 Remember 及其本机后端。
 2. 在电脑端选择「连接手机」，复制连接码。
 3. 让手机和电脑连接同一个可信局域网，在手机端输入连接码。
 4. 导入课表、选择课程录音，或打开已同步的笔记。

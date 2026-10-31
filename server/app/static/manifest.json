@@ -1,6 +1,6 @@
 {
-  "name": "remember",
-  "short_name": "remember",
+  "name": "Remember",
+  "short_name": "Remember",
   "description": "课表、笔记与课堂录音",
   "start_url": "/",
   "display": "standalone",

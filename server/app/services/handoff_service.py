@@ -73,16 +73,18 @@ FIXED_CONVENTIONS: tuple[str, ...] = (
     "版权边界：教材与课件的扫描原图不进入任何导出/分享产物",
     "离线边界：无服务器时只读本地笔记与检索，AI 解题需联网；不做手机端本地大模型推理",
     "安卓录音走 Kotlin 原生桥接，不用三方录音插件",
-    "legacy 转写 Provider 使用可配置的 faster-whisper-medium；ROCm/CUDA 与计算精度按实际运行环境选择",
+    "本地转写链路固定为 ROCm + faster-whisper-medium（float16/zh/beam_size=5/vad_filter），"
+    "不得假设 CUDA",
     "部署形态同一套代码配置切换（local/cloud）；不做教务系统爬取",
-    "归档库：./data/notes\\",
+    "归档库：./data/notes/",
 )
 
 ENVIRONMENT_FACTS: tuple[str, ...] = (
-    "Windows/Android 客户端；开发使用项目自备的 Flutter 与 Python 工具链",
-    "Python 使用 server/.venv/Scripts/python.exe（Windows）或 server/.venv/bin/python（POSIX）",
-    "脚本按 UTF-8 读写文本与中文路径",
-    "GPU 运行时按设备配置；ROCm/CUDA 依赖需自行安装，未配置时使用可用的 CPU 或服务模式",
+    "Windows；Bash 环境损坏（dirname/mkdir 等命令不可用，脚本用 PowerShell）",
+    "Python 用项目 venv：python"
+    "（依赖装于此；系统 Python 为 versions/3.13.12，未装依赖，勿直接用）",
+    "脚本内必须 sys.stdout.reconfigure(encoding='utf-8')（路径含中文）",
+    "GPU 为 AMD ROCm，不得假设 CUDA",
 )
 
 # ADR 决策记录（默认**只增不改**）：初始五篇对应 PRD §8.1；v3.0 新增 ADR-006（FR-31/FR-32，取代 Q-11）；
@@ -897,7 +899,7 @@ class HandoffService:
 
 ## 1. 项目是什么
 
-**remember（ClassNotes Assistant）**—— 把已在电脑上跑通的「离线 AI 学习工作流」
+**课堂学习助手（ClassNotes Assistant）**—— 把已在电脑上跑通的「离线 AI 学习工作流」
 （上课录音 → 转写 → 融合式课堂笔记 → 拍照搜题）产品化为**双端（Windows + Android）**软件。
 用户为深圳全日制本科生（机械类），本学期四门课：工程力学 / 普通物理1 / 线性代数 / 电工电子。
 

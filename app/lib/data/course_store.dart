@@ -54,4 +54,3 @@ class CourseStore {
     return byId.values.toList();
   }
 }
-

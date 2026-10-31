@@ -50,6 +50,9 @@ class _RecordingPageState extends State<RecordingPage>
   bool _autoRecordEnabled = false;
   Map<String, dynamic>? _nextClass;
   bool _syncingSchedule = false;
+  bool _scheduleSyncPending = false;
+  Future<void>? _scheduleSync;
+  int _autoToggleRevision = 0;
   bool _usingCachedCourses = true;
   String? _activeCourseId;
   Map<String, dynamic> _setup = {};
@@ -105,6 +108,7 @@ class _RecordingPageState extends State<RecordingPage>
   }
 
   Future<void> _toggleAuto(bool value) async {
+    final revision = ++_autoToggleRevision;
     final prefs = await SharedPreferences.getInstance();
     if (value) {
       final permission = await widget.recordingBridge.requestPermissions();
@@ -116,6 +120,7 @@ class _RecordingPageState extends State<RecordingPage>
         return;
       }
     }
+    if (!mounted || revision != _autoToggleRevision) return;
     setState(() => _autoRecordEnabled = value);
     await prefs.setBool(AutoRecordingSchedule.enabledKey, value);
     await _loadScheduleAndArmAlarms();
@@ -581,9 +586,26 @@ class _RecordingPageState extends State<RecordingPage>
     );
   }
 
-  Future<void> _loadScheduleAndArmAlarms() async {
-    if (widget.apiClient == null || _syncingSchedule) return;
+  Future<void> _loadScheduleAndArmAlarms() {
+    if (widget.apiClient == null) return Future<void>.value();
+    _scheduleSyncPending = true;
+    return _scheduleSync ??=
+        _drainScheduleSync().whenComplete(() => _scheduleSync = null);
+  }
+
+  Future<void> _drainScheduleSync() async {
     if (mounted) setState(() => _syncingSchedule = true);
+    try {
+      do {
+        _scheduleSyncPending = false;
+        await _syncScheduleOnce();
+      } while (_scheduleSyncPending);
+    } finally {
+      if (mounted) setState(() => _syncingSchedule = false);
+    }
+  }
+
+  Future<void> _syncScheduleOnce() async {
     try {
       final snapshot = await ScheduleStore.cached() ??
           await ScheduleStore.load(widget.apiClient!);
@@ -618,8 +640,6 @@ class _RecordingPageState extends State<RecordingPage>
       await _refreshSetup();
     } catch (e) {
       _lastScheduleSyncError = '$e';
-    } finally {
-      if (mounted) setState(() => _syncingSchedule = false);
     }
   }
 

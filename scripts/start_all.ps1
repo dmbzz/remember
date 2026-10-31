@@ -88,7 +88,7 @@ if (-not (Test-Path -LiteralPath $appExe)) {
 }
 
 Write-Info "========================================================"
-Write-Info "        remember  ——  一键启动"
+Write-Info "        Remember  ——  一键启动"
 Write-Info "========================================================"
 Write-Info ("项目根：{0}" -f $projectRoot)
 Write-Info ""

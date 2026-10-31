@@ -541,7 +541,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           try {
                             final tmpDir = await getTemporaryDirectory();
                             final savePath =
-                                '${tmpDir.path}/remember_update.apk';
+                                '${tmpDir.path}/Remember_update.apk';
 
                             final ok = await widget.apiClient.downloadApk(
                               downloadUrl: downloadUrl,
@@ -853,8 +853,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   subtitle: Text(
                     hasNewVersion
-                        ? 'remember · 已安装 v${AppConstants.appVersion}（构建 ${AppConstants.appVersionCode}）\n可更新到 v${_updateInfo!['version']}（构建 ${_updateInfo!['version_code']}）'
-                        : 'remember · 已安装 v${AppConstants.appVersion}（构建 ${AppConstants.appVersionCode}）',
+                        ? 'Remember · 已安装 v${AppConstants.appVersion}（构建 ${AppConstants.appVersionCode}）\n可更新到 v${_updateInfo!['version']}（构建 ${_updateInfo!['version_code']}）'
+                        : 'Remember · 已安装 v${AppConstants.appVersion}（构建 ${AppConstants.appVersionCode}）',
                   ),
                   trailing: _isCheckingUpdate
                       ? const SizedBox(

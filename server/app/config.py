@@ -184,6 +184,8 @@ class AppConfig(BaseSettings):
     auth_token: str | None = None
     force_https: bool = False
     pairing_state_path: str = ""
+    pairing_discovery_enabled: bool = True
+    pairing_discovery_port: int = Field(default=48137, ge=1, le=65535)
 
     # ---- 笔记多端同步（FR-31/FR-32）----
     sync: SyncConfig = Field(default_factory=SyncConfig)

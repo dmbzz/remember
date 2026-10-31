@@ -77,12 +77,13 @@ bool FlutterWindow::OnCreate() {
       result->Success(flutter::EncodableValue(utf8));
       return;
     }
-    if (call.method_name() != "pickIcs") { result->NotImplemented(); return; }
+    const bool audio = call.method_name() == "pickAudio";
+    if (!audio && call.method_name() != "pickIcs") { result->NotImplemented(); return; }
     wchar_t path[32768] = {};
     OPENFILENAMEW dialog = {};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = GetHandle();
-    dialog.lpstrFilter = L"ICS calendar (*.ics)\0*.ics\0\0";
+    dialog.lpstrFilter = audio ? L"Audio (*.wav;*.mp3;*.m4a;*.aac;*.flac;*.ogg;*.opus;*.wma)\0*.wav;*.mp3;*.m4a;*.aac;*.flac;*.ogg;*.opus;*.wma\0\0" : L"ICS calendar (*.ics)\0*.ics\0\0";
     dialog.lpstrFile = path;
     dialog.nMaxFile = 32768;
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
@@ -92,8 +93,8 @@ bool FlutterWindow::OnCreate() {
       return;
     }
     std::ifstream file(std::filesystem::path(path), std::ios::binary | std::ios::ate);
-    if (!file || file.tellg() <= 0 || file.tellg() > 5 * 1024 * 1024) {
-      result->Error("READ_FAILED", "ICS file is empty, unreadable or larger than 5 MB"); return;
+    if (!file || file.tellg() <= 0 || file.tellg() > (audio ? 20 : 5) * 1024 * 1024) {
+      result->Error("READ_FAILED", audio ? "Audio file is empty, unreadable or larger than 20 MB" : "ICS file is empty, unreadable or larger than 5 MB"); return;
     }
     std::vector<uint8_t> bytes(static_cast<size_t>(file.tellg()));
     file.seekg(0);

@@ -14,7 +14,7 @@ class AsrSettingsEntry extends StatelessWidget {
         child: ListTile(
           leading: const Icon(Icons.transcribe),
           title: const Text('录音自动转写'),
-          subtitle: Text(canConfigure ? 'Qwen 接入、转写目录与任务状态' : '查看电脑转写任务与重试'),
+          subtitle: Text(canConfigure ? '模型下载、转写目录与任务状态' : '查看电脑转写任务与重试'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
               builder: (_) => AsrSettingsPage(

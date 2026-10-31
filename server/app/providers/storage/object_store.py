@@ -212,4 +212,3 @@ class ObjectStorageProvider(StorageProvider):
 
     async def presign_put(self, key: str) -> str:
         return await asyncio.to_thread(self._presign_sync, key)
-

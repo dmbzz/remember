@@ -36,6 +36,7 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
     private var isBound = false
 
     private var pendingStart: Pair<MethodCall, MethodChannel.Result>? = null
+    private var pendingSchedule: Pair<MethodCall, MethodChannel.Result>? = null
 
     private var pendingPermissionResult: MethodChannel.Result? = null
 
@@ -46,6 +47,10 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
             isBound = true
             pendingStart?.let { (call, result) ->
                 pendingStart = null
+                onMethodCall(call, result)
+            }
+            pendingSchedule?.let { (call, result) ->
+                pendingSchedule = null
                 onMethodCall(call, result)
             }
             audioService?.setEventListener { type, data ->
@@ -180,23 +185,53 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
             }
             "syncScheduleAlarms" -> {
                 val alarms = call.argument<List<Map<String, Any?>>>("alarms") ?: emptyList()
-                if (!AutoRecordAlarmStore.schedule(context, alarms)) {
+                if (alarms.isNotEmpty() && !AutoRecordAlarmStore.hasPermissions(context)) {
                     result.success(false)
                     return
                 }
                 if (alarms.isNotEmpty()) {
                     try {
+                        val service = AudioRecordService.activeInstance ?: audioService
+                        if (service == null) {
+                            if (pendingSchedule != null) {
+                                result.error("BUSY", "自动录音正在布防", null)
+                                return
+                            }
+                            pendingSchedule = call to result
+                            ContextCompat.startForegroundService(context,
+                                Intent(context, AudioRecordService::class.java).apply { action = AudioRecordService.ACTION_ARM })
+                            if (!isBound) bindAudioService()
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                if (pendingSchedule?.second === result) {
+                                    pendingSchedule = null
+                                    result.error("SERVICE_UNAVAILABLE", "自动录音服务未就绪，请重试", null)
+                                }
+                            }, 3000)
+                            return
+                        }
                         ContextCompat.startForegroundService(context,
                             Intent(context, AudioRecordService::class.java).apply { action = AudioRecordService.ACTION_ARM })
-                        AudioRecordService.activeInstance?.arm()
+                        // arm() synchronously establishes the microphone foreground
+                        // service before any due/catch-up alarm is registered.
+                        service.arm()
+                        result.success(AutoRecordAlarmStore.schedule(context, alarms))
                     } catch (e: Exception) {
+                        if (pendingSchedule?.second === result) pendingSchedule = null
                         result.error("ARM_FAILED", e.message, null)
-                        return
                     }
-                } else if (AudioRecordService.activeInstance != null) {
-                    context.startService(Intent(context, AudioRecordService::class.java).apply { action = AudioRecordService.ACTION_DISARM })
+                } else {
+                    val hadPending = pendingSchedule != null
+                    pendingSchedule?.second?.error("CANCELLED", "自动录音布防已取消", null)
+                    pendingSchedule = null
+                    AutoRecordAlarmStore.schedule(context, alarms)
+                    if (hadPending || AudioRecordService.activeInstance != null) {
+                        // Keep ordering with already queued ACTION_ARM commands.
+                        context.startService(Intent(context, AudioRecordService::class.java).apply {
+                            action = AudioRecordService.ACTION_DISARM
+                        })
+                    }
+                    result.success(true)
                 }
-                result.success(true)
             }
             "installApk" -> {
                 val filePath = call.argument<String>("filePath")

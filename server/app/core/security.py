@@ -51,7 +51,9 @@ class LanPairingMiddleware(BaseHTTPMiddleware):
                 status_code=403,
                 content=error_response_body(ErrorCode.UNAUTHORIZED, "该操作只能在电脑本机执行"),
             )
-        if loopback or path in {"/api/health", "/api/pairing/exchange"}:
+        if loopback or path in {
+            "/api/health", "/api/pairing/exchange", "/api/pairing/resolve", "/api/pairing/identity"
+        }:
             return await call_next(request)
 
         scheme, _, token = request.headers.get("Authorization", "").partition(" ")

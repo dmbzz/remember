@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../data/upload_queue.dart';
+import '../../core/motion.dart';
+import 'recent_records.dart';
+import 'recording_history_page.dart';
 
 class RecordingSyncPanel extends StatelessWidget {
   const RecordingSyncPanel(
@@ -13,7 +16,7 @@ class RecordingSyncPanel extends StatelessWidget {
         stream: queue.queueStream,
         initialData: queue.items,
         builder: (context, snapshot) {
-          final items = (snapshot.data ?? []).reversed.toList();
+          final items = newestUploads(snapshot.data ?? []);
           return Card(
               child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -35,47 +38,27 @@ class RecordingSyncPanel extends StatelessWidget {
                           icon: const Icon(Icons.sync),
                           label: const Text('重新扫描并同步')),
                       if (items.isEmpty) const Text('暂无同步记录。录音结束后可点击上方按钮重新扫描。'),
-                      for (final item in items.take(10))
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(item.filePath.split(RegExp(r'[\\/]')).last,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis),
-                                Text(switch (item.status) {
-                                  UploadStatus.pending => '等待上传，手机文件保留',
-                                  UploadStatus.uploading =>
-                                    '正在发送到电脑：${item.progress}%',
-                                  UploadStatus.completed => '电脑已确认收到 · 手机副本已删除',
-                                  UploadStatus.failed => item.retryable
-                                      ? '等待连接电脑，稍后自动重试'
-                                      : '需要处理，手机文件保留',
-                                }),
-                                if (item.error != null)
-                                  Text(item.error!,
-                                      style: TextStyle(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .error)),
-                                if (item.status == UploadStatus.uploading)
-                                  LinearProgressIndicator(
-                                      value: item.progress / 100),
-                                if (item.status == UploadStatus.failed)
-                                  Wrap(spacing: 8, children: [
-                                    TextButton(
-                                        onPressed: () => queue.retry(item.id),
-                                        child: const Text('立即重试')),
-                                    if (onAssign != null &&
-                                        (!item.retryable ||
-                                            item.courseId.isEmpty))
-                                      TextButton(
-                                          onPressed: () => onAssign!(item),
-                                          child: const Text('指定课程')),
-                                  ]),
-                              ]),
-                        ),
+                      RecentRecordsHeader(
+                          title: '最近上传记录',
+                          hiddenActive: items
+                              .skip(recentRecordLimit)
+                              .where((e) =>
+                                  e.status == UploadStatus.pending ||
+                                  e.status == UploadStatus.uploading)
+                              .length,
+                          onAll: () => Navigator.of(context).push(
+                              studyReadingRoute(
+                                  context,
+                                  (_) => UploadHistoryPage(
+                                      queue: queue,
+                                      onSync: onSync,
+                                      onAssign: onAssign)))),
+                      for (final item in items.take(recentRecordLimit))
+                        UploadRecordCard(
+                            key: ValueKey(item.id),
+                            item: item,
+                            queue: queue,
+                            onAssign: onAssign),
                     ],
                   )));
         },

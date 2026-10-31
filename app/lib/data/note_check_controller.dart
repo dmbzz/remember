@@ -504,4 +504,3 @@ class NoteCheckController extends ChangeNotifier {
     super.dispose();
   }
 }
-

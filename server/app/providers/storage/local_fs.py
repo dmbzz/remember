@@ -1,4 +1,4 @@
-"""本地文件系统存储 Provider —— 落地数据目录（目录由配置提供）。"""
+"""本地文件系统存储 Provider —— 落地数据目录（默认 ``./data/storage``）。"""
 
 from __future__ import annotations
 
@@ -166,4 +166,3 @@ class LocalFileStorageProvider(StorageProvider):
     async def presign_put(self, key: str) -> str:
         """本地模式无预签名概念，直接返回目标文件路径（URI）。"""
         return self._key_path(key).resolve().as_uri()
-

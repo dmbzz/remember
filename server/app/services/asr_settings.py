@@ -15,7 +15,8 @@ from app import config as app_config
 class AsrSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = False
-    mode: Literal["local_qwen", "qwen_service"] = "local_qwen"
+    mode: Literal["local_qwen", "local_whisper", "qwen_service"] = "local_qwen"
+    managed_id: str = ""
     output_dir: str = ""
     python_path: str = ""
     model_path: str = ""
@@ -46,8 +47,17 @@ def public_settings(value: AsrSettings) -> dict:
 def validate_settings(value: AsrSettings) -> None:
     if not value.output_dir or not Path(value.output_dir).is_absolute() or not Path(value.output_dir).is_dir():
         raise ValueError("转写保存目录必须是电脑上已存在的绝对目录")
-    if value.mode == "local_qwen":
-        for field in ("python_path", "ffmpeg_path", "model_path", "aligner_path"):
+    if value.mode in ("local_qwen", "local_whisper"):
+        if value.managed_id:
+            from app.services.asr_model_manager import get_model_manager
+            receipt = get_model_manager().receipt(value.managed_id)
+            expected_mode='local_qwen' if receipt['engine']=='qwen' else 'local_whisper'
+            if value.mode!=expected_mode or not receipt.get('verified'):
+                raise ValueError('模型类型不一致或尚未通过音频测试，请在模型页重新选择')
+            for field in ('python_path','model_path','ffmpeg_path','aligner_path'):
+                if getattr(value,field) != receipt.get(field,''):
+                    raise ValueError('应用内模型的受管路径已变化，请在模型页重新选择')
+        for field in (("python_path", "ffmpeg_path", "model_path", "aligner_path") if value.mode=='local_qwen' else ("python_path","ffmpeg_path","model_path")):
             p = Path(getattr(value, field))
             valid = p.is_file() if field.endswith("_path") and field in ("python_path", "ffmpeg_path") else p.is_dir()
             if not p.is_absolute() or not valid:

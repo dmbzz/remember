@@ -30,7 +30,7 @@ bool IsShortcutForExecutable(const std::filesystem::path& shortcut,
 
 bool EnsureNotificationShortcut(const std::filesystem::path& programs_path,
                                 const std::wstring& executable) {
-  const auto link_path = programs_path / L"remember.lnk";
+  const auto link_path = programs_path / L"Remember.lnk";
   if (std::filesystem::exists(link_path) &&
       !IsShortcutForExecutable(link_path, executable)) return false;
   Microsoft::WRL::ComPtr<IShellLinkW> link;
@@ -38,7 +38,7 @@ bool EnsureNotificationShortcut(const std::filesystem::path& programs_path,
                                        IID_PPV_ARGS(&link)));
   winrt::check_hresult(link->SetPath(executable.c_str()));
   winrt::check_hresult(link->SetWorkingDirectory(std::filesystem::path(executable).parent_path().c_str()));
-  winrt::check_hresult(link->SetDescription(L"remember"));
+  winrt::check_hresult(link->SetDescription(L"Remember"));
   winrt::check_hresult(link->SetIconLocation(executable.c_str(), 0));
   Microsoft::WRL::ComPtr<IPropertyStore> properties;
   winrt::check_hresult(link.As(&properties));

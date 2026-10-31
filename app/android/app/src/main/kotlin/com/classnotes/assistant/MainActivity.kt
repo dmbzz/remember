@@ -13,10 +13,13 @@ import schedule.ScheduleWidgetProvider
 
 class MainActivity : FlutterActivity() {
     private var scheduleChannel: MethodChannel? = null
+    private var pairingDiscovery: pairing.PairingDiscovery? = null
     private var pickerResult: MethodChannel.Result? = null
     private var notesPickerResult: MethodChannel.Result? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        pairingDiscovery?.dispose()
+        pairingDiscovery = pairing.PairingDiscovery(this, flutterEngine.dartExecutor.binaryMessenger)
         flutterEngine.plugins.add(audio.RecordingBridgePlugin())
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "class_notes/course_reminders").setMethodCallHandler { call, result ->
             if (call.method == "openExactAlarms" || call.method == "openNotifications") {
@@ -120,6 +123,11 @@ class MainActivity : FlutterActivity() {
                 } catch (e: Exception) { result.error("SCHEDULE_WIDGET", e.message, null) }
             }
         }
+    }
+    override fun onDestroy() {
+        pairingDiscovery?.dispose()
+        pairingDiscovery = null
+        super.onDestroy()
     }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)

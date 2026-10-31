@@ -32,7 +32,7 @@ from app.services.handoff_service import HandoffService  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="生成 remember 交接包（FR-16）")
+    parser = argparse.ArgumentParser(description="生成 Remember 交接包（FR-16）")
     parser.add_argument("--milestone", default="M0", help="里程碑编号，如 M0 / M1")
     parser.add_argument("--stage", default=None, help="阶段名，如「项目地基」")
     parser.add_argument(

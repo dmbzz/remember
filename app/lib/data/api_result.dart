@@ -24,4 +24,3 @@ class ApiResult<T> {
   /// 是否成功。
   bool get ok => error == null;
 }
-

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../core/constants.dart';
 import 'api_result.dart';
+import 'pairing_connector.dart';
 
 /// 统一 API 客户端（Dio 封装）。
 ///
@@ -10,8 +11,33 @@ import 'api_result.dart';
 /// 课表刷不出来」的根因之一。失败时 [ApiResult.error] 会带上**实际请求的 URL**，
 /// 用户一眼能看出连的是哪个地址。
 class ApiClient {
-  Future<ApiResult<Map<String, dynamic>>> getDesktopSettings() => _getMap('/api/settings/desktop');
-  Future<ApiResult<Map<String, dynamic>>> saveDesktopSettings(bool notify) => _putMap('/api/settings/desktop', data: {'asr_notifications': notify});
+  Future<ApiResult<Map<String, dynamic>>> getAsrModels(
+          {bool refresh = false}) =>
+      _getMap('/api/asr/models', query: {'refresh': refresh});
+  Future<ApiResult<Map<String, dynamic>>> getAsrModelOperation() =>
+      _getMap('/api/asr/models/operation');
+  Future<ApiResult<Map<String, dynamic>>> installAsrModel(
+          String model, String channel, String device) =>
+      _postMap('/api/asr/models/install',
+          data: {'model_id': model, 'channel': channel, 'device': device});
+  Future<ApiResult<Map<String, dynamic>>> cancelAsrModelOperation() =>
+      _postMap('/api/asr/models/cancel', data: {});
+  Future<ApiResult<Map<String, dynamic>>> testAsrModel(String deployment) =>
+      _postMap('/api/asr/models/test', data: {'deployment_id': deployment});
+  Future<ApiResult<Map<String, dynamic>>> activateAsrModel(String deployment) =>
+      _postMap('/api/asr/models/activate', data: {'deployment_id': deployment});
+  Future<ApiResult<Map<String, dynamic>>> testAsrAudio(String deployment,
+          String filename, List<int> bytes, String reference) =>
+      _postMap('/api/asr/models/test-audio',
+          data: FormData.fromMap({
+            'deployment_id': deployment,
+            'reference': reference,
+            'file': MultipartFile.fromBytes(bytes, filename: filename)
+          }));
+  Future<ApiResult<Map<String, dynamic>>> getDesktopSettings() =>
+      _getMap('/api/settings/desktop');
+  Future<ApiResult<Map<String, dynamic>>> saveDesktopSettings(bool notify) =>
+      _putMap('/api/settings/desktop', data: {'asr_notifications': notify});
   Future<ApiResult<List<Map<String, dynamic>>>> getNoteChoices(
           Map<String, String> scope) =>
       _getList('/api/notes/file-sync/choices', query: scope);
@@ -40,6 +66,14 @@ class ApiClient {
       _postMap('/api/settings/asr/detect', data: {});
   Future<ApiResult<List<Map<String, dynamic>>>> getAsrJobs() =>
       _getList('/api/asr/jobs');
+  Future<ApiResult<List<Map<String, dynamic>>>> getAllAsrJobs() =>
+      _getList('/api/asr/jobs', query: {'all': true});
+  Future<ApiResult<Map<String, dynamic>>> cancelAsrJob(String id) =>
+      _postMap('/api/asr/jobs/${Uri.encodeComponent(id)}/cancel', data: {});
+  Future<ApiResult<Map<String, dynamic>>> deleteAsrJob(String id) =>
+      _deleteMap('/api/asr/jobs/${Uri.encodeComponent(id)}');
+  Future<ApiResult<Map<String, dynamic>>> deleteAsrRecording(String id) =>
+      _deleteMap('/api/asr/jobs/${Uri.encodeComponent(id)}/recording');
   Future<ApiResult<Map<String, dynamic>>> retryAsrJob(String id) =>
       _postMap('/api/asr/jobs/${Uri.encodeComponent(id)}/retry', data: {});
 
@@ -133,56 +167,12 @@ class ApiClient {
     }
   }
 
-  /// 在更新当前地址和令牌前，先向目标电脑验证连接码。
+  PairingConnector? _pairingConnector;
   Future<ApiResult<Map<String, String>>> pairWithComputer(
-      String connectionCode) async {
-    final value = connectionCode.trim().replaceFirst(RegExp(r'^https?://'), '');
-    final match = RegExp(r'^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})#(\d{6})$')
-        .firstMatch(value);
-    if (match == null ||
-        match.group(1)!.split('.').any((part) => int.parse(part) > 255) ||
-        int.parse(match.group(2)!) < 1 ||
-        int.parse(match.group(2)!) > 65535) {
-      return const ApiResult.failed('连接码格式不正确，请输入电脑显示的完整连接码');
-    }
-    final target = 'http://${match.group(1)}:${match.group(2)}';
-    final pairingClient = Dio(BaseOptions(
-      baseUrl: target,
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 5),
-    ));
-    try {
-      final response = await pairingClient.post('/api/pairing/exchange', data: {
-        'code': match.group(3),
-        'device_name': 'Android 手机',
-      });
-      if (response.statusCode == 200 &&
-          response.data is Map &&
-          response.data['code'] == 0) {
-        final data = response.data['data'];
-        final token = data is Map ? data['token'] : null;
-        if (token is String && token.isNotEmpty) {
-          return ApiResult.ok({'base_url': target, 'token': token});
-        }
-      }
-      return ApiResult.failed('电脑返回了无效的配对响应：$target');
-    } on DioException catch (error) {
-      final detail = error.response?.data;
-      if (detail is Map && detail['message'] != null) {
-        return ApiResult.failed(detail['message'].toString());
-      }
-      if (error.type == DioExceptionType.connectionTimeout ||
-          error.type == DioExceptionType.receiveTimeout) {
-        return const ApiResult.failed(
-          '连接超时。请确认手机与电脑在同一网络；若连接码是 192.168.137.1，手机必须连接这台电脑的热点。也可以在电脑端试另一条连接码。',
-        );
-      }
-      return ApiResult.failed(
-          '无法连接电脑 $target：${error.message ?? error.type.name}');
-    } finally {
-      pairingClient.close();
-    }
-  }
+          String connectionCode) =>
+      (_pairingConnector ??= PairingConnector())
+          .pair(connectionCode, knownBaseUrl: baseUrl);
+  void cancelPairing() => _pairingConnector?.cancel();
 
   // ---------------------------------------------------------------------------
   // 错误信息构造（一律带上实际请求的 URL，便于用户定位）
@@ -289,6 +279,22 @@ class ApiClient {
         if (d is Map<String, dynamic>) return ApiResult.ok(d);
         if (d is Map) return ApiResult.ok(d.cast<String, dynamic>());
         return const ApiResult.ok(<String, dynamic>{});
+      }
+      return ApiResult.failed(_badResponse(res));
+    } on DioException catch (e) {
+      return ApiResult.failed(_dioError(e));
+    } catch (e) {
+      return ApiResult.failed('解析后端响应失败：$e');
+    }
+  }
+
+  Future<ApiResult<Map<String, dynamic>>> _deleteMap(String path) async {
+    try {
+      final res = await dio.delete(path);
+      if (res.statusCode == 200 && res.data is Map && res.data['code'] == 0) {
+        final payload = res.data['data'];
+        return ApiResult.ok(
+            payload is Map ? payload.cast<String, dynamic>() : {});
       }
       return ApiResult.failed(_badResponse(res));
     } on DioException catch (e) {
@@ -496,4 +502,3 @@ class ApiClient {
     }
   }
 }
-

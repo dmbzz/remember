@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="schedule_widget_name">remember·课表</string>
+    <string name="schedule_widget_name">Remember·课表</string>
     <string name="schedule_widget_description">2×2 今日课表，显示当前或下一节课的教室和时间</string>
     <color name="widget_background">#EEEEF7</color>
     <color name="widget_border">#FFFFFF</color>

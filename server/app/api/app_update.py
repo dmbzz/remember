@@ -12,14 +12,15 @@ __all__ = ["router"]
 
 router = APIRouter(tags=["app_update"])
 
-CURRENT_APP_VERSION = "1.0.1"
-CURRENT_APP_VERSION_CODE = 39
+CURRENT_APP_VERSION = "1.0.2"
+CURRENT_APP_VERSION_CODE = 43
 RELEASE_NOTES = (
-    "1. 版本号更新至 1.0.1\n"
-    "2. 更新项目介绍与界面展示，保留课表、笔记和录音功能"
+    "1. 修复临上课开启自动录音时，排期刷新和开课边界导致漏录的问题\n"
+    "2. 当节课尚未结束时及时开始，仍在原定下课时间停止，避免重复录音\n"
+    "3. 应用显示名称统一为 Remember，保留笔记、课表、转写任务管理与已有配对"
 )
 
-APK_PATH = Path(__file__).resolve().parent.parent.parent.parent / "remember.apk"
+APK_PATH = Path(__file__).resolve().parent.parent.parent.parent / "课堂学习助手.apk"
 
 
 @router.get("/app/version", summary="检查移动端最新版本")
@@ -44,7 +45,6 @@ async def download_app_apk():
         raise ApiError(ErrorCode.NOT_FOUND, "未找到最新 APK 安装包，请先执行构建")
     return FileResponse(
         path=str(APK_PATH),
-        filename="remember_latest.apk",
+        filename="Remember_latest.apk",
         media_type="application/vnd.android.package-archive",
     )
-

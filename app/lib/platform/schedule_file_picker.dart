@@ -10,6 +10,16 @@ class ScheduleFilePicker {
   static const channel = MethodChannel('class_notes/schedule_import');
   static Future<String?> pickDirectory() =>
       channel.invokeMethod<String>('pickDirectory');
+  static Future<ScheduleFile?> pickAudio() async {
+    final value = await channel.invokeMapMethod<String, dynamic>('pickAudio');
+    if (value == null) return null;
+    final bytes = value['bytes'] as Uint8List;
+    if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024) {
+      throw const FormatException('请选择20MB以内的短音频');
+    }
+    return ScheduleFile(value['name'] as String, bytes);
+  }
+
   static Future<ScheduleFile?> pick() async {
     final value = await channel.invokeMapMethod<String, dynamic>('pickIcs');
     if (value == null) return null;

@@ -19,6 +19,7 @@ class UploadItem {
   String courseId;
   final int lesson;
   final String classDate;
+  final DateTime? createdAt;
   int progress; // 0..100
   UploadStatus status;
   String? error;
@@ -32,6 +33,7 @@ class UploadItem {
     required this.courseId,
     required this.lesson,
     required this.classDate,
+    this.createdAt,
     this.progress = 0,
     this.status = UploadStatus.pending,
     this.error,
@@ -46,6 +48,7 @@ class UploadItem {
         'courseId': courseId,
         'lesson': lesson,
         'classDate': classDate,
+        'createdAt': createdAt?.toIso8601String(),
         'progress': progress,
         'status': status.name,
         'error': error,
@@ -60,6 +63,7 @@ class UploadItem {
         courseId: map['courseId'] as String,
         lesson: map['lesson'] as int? ?? 1,
         classDate: map['classDate'] as String? ?? '',
+        createdAt: DateTime.tryParse('${map['createdAt'] ?? ''}'),
         progress: map['progress'] as int? ?? 0,
         status: UploadStatus.values.firstWhere(
           (e) => e.name == map['status'],
@@ -155,6 +159,7 @@ class UploadQueue {
       courseId: courseId,
       lesson: lesson,
       classDate: classDate,
+      createdAt: DateTime.now(),
     );
     _items.add(item);
     _notify();
@@ -181,6 +186,7 @@ class UploadQueue {
               courseId: '',
               lesson: 1,
               classDate: item['classDate'] as String? ?? '',
+              createdAt: DateTime.now(),
               status: UploadStatus.failed,
               retryable: false,
               error: '无法识别所属课程，请保留手机文件'));
@@ -406,4 +412,3 @@ class UploadQueue {
     _notify();
   }
 }
-

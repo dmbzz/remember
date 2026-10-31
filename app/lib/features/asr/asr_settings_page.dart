@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import '../../data/api_client.dart';
 import '../../platform/schedule_file_picker.dart';
 import 'asr_job_card.dart';
+import 'asr_jobs_page.dart';
+import '../../core/motion.dart';
+import '../recording/recent_records.dart';
+import 'asr_models_page.dart';
 
 /// ASR settings belong to the receiving PC. Phones can inspect jobs and retry.
 class AsrSettingsPage extends StatefulWidget {
@@ -32,10 +36,13 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
   bool _keySet = false, _clearKey = false;
   bool _loadedSettings = false;
   String _mode = 'local_qwen';
+  String _managedId = '';
   String? _error, _message, _jobsError;
   List<Map<String, dynamic>> _jobs = [];
   Timer? _jobTimer;
   bool _readingJobs = false;
+  int _jobsEpoch = 0;
+  int _jobsSnapshotRevision = 0;
   bool get _editable => widget.editable ?? Platform.isWindows;
   double _choiceHeight(BuildContext context) {
     final painter = TextPainter(
@@ -111,6 +118,7 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
       _delete = data['delete_source'] == true;
       _keySet = data['api_key_set'] == true;
       _mode = '${data['mode'] ?? 'local_qwen'}';
+      _managedId = '${data['managed_id'] ?? ''}';
     }
     await _refreshJobs();
     if (mounted) {
@@ -120,26 +128,62 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
     }
   }
 
-  Future<void> _refreshJobs() async {
-    if (_readingJobs) return;
+  Future<void> _refreshJobs({bool force = false}) async {
+    if (_readingJobs && !force) return;
+    final epoch = ++_jobsEpoch;
     _readingJobs = true;
     final response = await widget.apiClient.getAsrJobs();
+    if (!mounted || epoch != _jobsEpoch) return;
     _readingJobs = false;
-    if (!mounted) return;
     setState(() {
       _jobsError = response.error;
-      if (response.ok) _jobs = response.data!;
+      if (response.ok) {
+        _jobs = newestRecords(response.data!);
+        _jobsSnapshotRevision = epoch;
+      }
     });
   }
 
   Map<String, dynamic> _payload() => {
         for (final e in _fields.entries) e.key: e.value.text.trim(),
         'mode': _mode,
+        'managed_id': _managedId,
         'enabled': _enabled,
         'delete_source': _delete,
         'min_chars': 1500,
         'clear_api_key': _clearKey,
       };
+
+  Future<void> _openModels() async {
+    final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(
+        builder: (_) => AsrModelsPage(api: widget.apiClient)));
+    if (changed != true || !mounted) return;
+    final response = await widget.apiClient.getAsrSettings();
+    if (!mounted) return;
+    if (!response.ok) {
+      setState(() => _error = response.error);
+      return;
+    }
+    final data = response.data!;
+    // Preserve unsaved output, switch and credential drafts when returning.
+    for (final key in [
+      'python_path',
+      'model_path',
+      'aligner_path',
+      'ffmpeg_path',
+      'model'
+    ]) {
+      _fields[key]!.text = '${data[key] ?? ''}';
+    }
+    if (_fields['output_dir']!.text.trim().isEmpty) {
+      _fields['output_dir']!.text = '${data['output_dir'] ?? ''}';
+    }
+    setState(() {
+      _mode = '${data['mode'] ?? 'local_qwen'}';
+      _managedId = '${data['managed_id'] ?? ''}';
+      _message = '已更新转写模型；其他未保存设置仍保留。';
+    });
+  }
 
   Future<void> _action(String action) async {
     if (_busy || !_loadedSettings) return;
@@ -228,28 +272,10 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
                     : null),
           ));
 
-  Future<void> _retry(String id) async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final response = await widget.apiClient.retryAsrJob(id);
-      if (!mounted) return;
-      if (!response.ok) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(response.error!)));
-      }
-      await _refreshJobs();
-    } finally {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-        });
-      }
-    }
+  Future<void> _openAllJobs() async {
+    await Navigator.of(context).push(studyReadingRoute(
+        context, (_) => AsrJobsPage(apiClient: widget.apiClient)));
+    if (mounted) await _refreshJobs(force: true);
   }
 
   @override
@@ -262,6 +288,14 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
                     constraints: const BoxConstraints(maxWidth: 840),
                     child:
                         ListView(padding: const EdgeInsets.all(20), children: [
+                      if (_editable)
+                        Card(
+                            child: ListTile(
+                                leading: const Icon(Icons.download_outlined),
+                                title: const Text('模型下载与部署'),
+                                subtitle: const Text('自动检测显卡，选择模型并在应用内测试'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: _busy ? null : _openModels)),
                       if (_editable && _error != null && !_loadedSettings)
                         Padding(
                             padding: const EdgeInsets.only(bottom: 16),
@@ -278,7 +312,7 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               const Text(
-                                  '电脑确认录音上传完整后，自动用 Qwen 转写并保存 TXT。电脑关机或手机离线时，录音保留在手机，连回电脑后继续上传。'),
+                                  '电脑确认录音上传完整后，用所选模型转写并保存 TXT。电脑关机或手机离线时，录音保留在手机，连回电脑后继续上传。'),
                               SwitchListTile(
                                   contentPadding: EdgeInsets.zero,
                                   title: const Text('上传完成后自动转写'),
@@ -303,25 +337,39 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
                                       border: OutlineInputBorder()),
                                   items: const [
                                     DropdownMenuItem(
+                                        value: 'local_whisper',
+                                        child: Text('应用内 Whisper 模型',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis)),
+                                    DropdownMenuItem(
                                         value: 'local_qwen',
-                                        child: Text('本机 Qwen 环境')),
+                                        child: Text('本机 Qwen 环境',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis)),
                                     DropdownMenuItem(
                                         value: 'qwen_service',
-                                        child: Text('Qwen 转写服务'))
+                                        child: Text('Qwen 转写服务',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis))
                                   ],
                                   onChanged: _busy
                                       ? null
                                       : (v) {
-                                          if (v != null) {
+                                          if (v != null && v != _mode) {
                                             setState(() {
                                               _mode = v;
+                                              _managedId = '';
                                               _message = null;
                                             });
                                           }
                                         }),
                               const SizedBox(height: 20),
                               _field('output_dir', '转写文件保存文件夹'),
-                              if (_mode == 'local_qwen') ...[
+                              if (_managedId.isNotEmpty) ...[
+                                Text('当前模型：${_fields['model']!.text}'),
+                                const Text(
+                                    '由应用管理运行环境和模型文件；切换或测试模型请进入上方“模型下载与部署”。'),
+                              ] else if (_mode == 'local_qwen') ...[
                                 Align(
                                     alignment: Alignment.centerLeft,
                                     child: TextButton.icon(
@@ -337,6 +385,8 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
                                 _field('ffmpeg_path', 'FFmpeg 可执行文件'),
                                 const Text(
                                     '使用你已安装的 Qwen 环境。GPU 失败时会降级到同一模型的 CPU，不会自动安装或更换引擎。'),
+                              ] else if (_mode == 'local_whisper') ...[
+                                const Text('请在“模型下载与部署”中选择已测试通过的 Whisper 模型。'),
                               ] else ...[
                                 _field('base_url', '服务基础地址',
                                     hint: '例如 https://你的服务地址/v1'),
@@ -408,28 +458,38 @@ class _AsrSettingsPageState extends State<AsrSettingsPage> {
                                 color: Theme.of(context).colorScheme.error)),
                       if (!_editable && _busy) const LinearProgressIndicator(),
                       const SizedBox(height: 32),
-                      Wrap(
-                          alignment: WrapAlignment.spaceBetween,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 16,
-                          children: [
-                            Text('最近转写任务',
-                                style: Theme.of(context).textTheme.titleLarge),
-                            TextButton.icon(
-                                onPressed: _busy ? null : _refreshJobs,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('刷新任务')),
-                          ]),
+                      RecentRecordsHeader(
+                          title: '最近转写任务',
+                          onAll: _openAllJobs,
+                          hiddenActive: _jobs
+                              .skip(recentRecordLimit)
+                              .where((j) => ['running', 'queued', 'cancelling']
+                                  .contains(j['status']))
+                              .length),
+                      Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                              onPressed: _refreshJobs,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('刷新任务'))),
                       if (_jobsError != null)
                         Text(_jobsError!,
                             style: TextStyle(
                                 color: Theme.of(context).colorScheme.error)),
                       if (_jobs.isEmpty && _jobsError == null)
                         const Text('暂无任务。开启后，新上传的录音会显示在这里。'),
-                      for (final job in _jobs) _jobCard(job),
+                      for (final job in _jobs.take(recentRecordLimit))
+                        _jobCard(job),
                     ]))),
       );
 
   Widget _jobCard(Map<String, dynamic> job) => AsrJobCard(
-      job: job, onRetry: _busy ? null : () => _retry('${job['id']}'));
+      key: ValueKey('asr-${job['id']}'),
+      job: job,
+      apiClient: widget.apiClient,
+      snapshotRevision: _jobsSnapshotRevision,
+      refreshSnapshot: () async {
+        await _refreshJobs(force: true);
+        return _jobsEpoch;
+      });
 }
