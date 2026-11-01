@@ -67,7 +67,7 @@ jobs:
           $path = Join-Path $env:RUNNER_TEMP 'remember-signing.jks'
           [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:KEYSTORE_BASE64))
           "REMEMBER_ANDROID_KEYSTORE_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Build Windows and Android
+      - name: Build Android
         if: steps.gate.outputs.run == 'true'
         working-directory: app
         env:
@@ -80,8 +80,6 @@ jobs:
           flutter pub get
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           flutter build apk --release
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          flutter build windows --release
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Verify APK identity and signing certificate
         if: steps.gate.outputs.run == 'true'
@@ -97,10 +95,19 @@ jobs:
           if (($badging -join "`n") -notmatch ("versionCode='" + [regex]::Escape($env:RELEASE_CODE) + "'") -or ($badging -join "`n") -notmatch ("versionName='" + [regex]::Escape($env:RELEASE_VERSION) + "'")) { throw 'Unexpected APK version' }
           $cert = & "$($buildTools.FullName)\apksigner.bat" verify --verbose --print-certs $apk
           if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
-          $certText = ($cert -join "`n").ToLowerInvariant().Replace(':','')
-          if ($certText -notmatch 'signer #1 certificate sha-256 digest\s*c467b719bd954fe653374bfa3248ea603ad4bcd930fdbbc420345066f9bcf55a') { throw 'APK signing certificate does not match existing installation' }
           $signers = @($cert | Where-Object { $_ -match '^Signer #\d+ certificate SHA-256 digest:' })
           if ($signers.Count -ne 1) { throw 'Unexpected number of APK signers' }
+          if ($signers[0] -notmatch '^Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$') { throw 'Unable to read the APK certificate fingerprint' }
+          $actualFingerprint = $Matches[1].ToLowerInvariant()
+          Write-Host "Public APK signing certificate SHA-256: $actualFingerprint"
+          if ($actualFingerprint -ne 'c467b719bd954fe653374bfa3248ea603ad4bcd930fdbbc420345066f9bcf55a') { throw 'APK signing certificate does not match existing installation' }
+      - name: Build Windows
+        if: steps.gate.outputs.run == 'true'
+        working-directory: app
+        shell: pwsh
+        run: |
+          flutter build windows --release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Prepare embedded Python and package
         if: steps.gate.outputs.run == 'true'
         shell: pwsh
