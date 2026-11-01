@@ -1,0 +1,153 @@
+name: Build and release Remember
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'test builds only; publish creates a verified release'
+        required: true
+        type: choice
+        options: [test, publish]
+        default: test
+permissions:
+  contents: write
+concurrency:
+  group: remember-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - id: gate
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: python scripts/release_gate.py
+      - uses: actions/setup-java@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        if: steps.gate.outputs.run == 'true'
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: Prepare Android signing
+        if: steps.gate.outputs.run == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.REMEMBER_ANDROID_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.REMEMBER_ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.REMEMBER_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.REMEMBER_ANDROID_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:KEYSTORE_BASE64 -or -not $env:STORE_PASSWORD -or -not $env:KEY_ALIAS -or -not $env:KEY_PASSWORD) { throw 'Missing Android signing secrets' }
+          $path = Join-Path $env:RUNNER_TEMP 'remember-signing.jks'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+          "REMEMBER_ANDROID_KEYSTORE_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build Windows and Android
+        if: steps.gate.outputs.run == 'true'
+        working-directory: app
+        env:
+          REMEMBER_CI_SIGNING: 'true'
+          REMEMBER_ANDROID_STORE_PASSWORD: ${{ secrets.REMEMBER_ANDROID_STORE_PASSWORD }}
+          REMEMBER_ANDROID_KEY_ALIAS: ${{ secrets.REMEMBER_ANDROID_KEY_ALIAS }}
+          REMEMBER_ANDROID_KEY_PASSWORD: ${{ secrets.REMEMBER_ANDROID_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          flutter build apk --release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          flutter build windows --release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Verify APK identity and signing certificate
+        if: steps.gate.outputs.run == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.gate.outputs.version }}
+          RELEASE_CODE: ${{ steps.gate.outputs.code }}
+        shell: pwsh
+        run: |
+          $buildTools = Get-ChildItem "$env:ANDROID_HOME\build-tools" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $apk = 'app/build/app/outputs/flutter-apk/app-release.apk'
+          $badging = & "$($buildTools.FullName)\aapt.exe" dump badging $apk
+          if ($LASTEXITCODE -ne 0 -or ($badging -join "`n") -notmatch "package: name='com\.classnotes\.assistant'") { throw 'Unexpected APK package' }
+          if (($badging -join "`n") -notmatch ("versionCode='" + [regex]::Escape($env:RELEASE_CODE) + "'") -or ($badging -join "`n") -notmatch ("versionName='" + [regex]::Escape($env:RELEASE_VERSION) + "'")) { throw 'Unexpected APK version' }
+          $cert = & "$($buildTools.FullName)\apksigner.bat" verify --verbose --print-certs $apk
+          if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
+          $certText = ($cert -join "`n").ToLowerInvariant().Replace(':','')
+          if ($certText -notmatch 'signer #1 certificate sha-256 digest\s*c467b719bd954fe653374bfa3248ea603ad4bcd930fdbbc420345066f9bcf55a') { throw 'APK signing certificate does not match existing installation' }
+          $signers = @($cert | Where-Object { $_ -match '^Signer #\d+ certificate SHA-256 digest:' })
+          if ($signers.Count -ne 1) { throw 'Unexpected number of APK signers' }
+      - name: Prepare embedded Python and package
+        if: steps.gate.outputs.run == 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          $runtimeZip = Join-Path $env:RUNNER_TEMP 'python-embed.zip'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip' -OutFile $runtimeZip
+          if ((Get-FileHash -Algorithm SHA256 $runtimeZip).Hash.ToLowerInvariant() -ne '90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907') { throw 'Python runtime hash mismatch' }
+          $runtime = Join-Path $env:RUNNER_TEMP 'remember-python'
+          Expand-Archive -LiteralPath $runtimeZip -DestinationPath $runtime
+          python -m pip install --disable-pip-version-check --target "$runtime/Lib/site-packages" -r server/requirements-portable.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -Type Directory -Force dist | Out-Null
+          Copy-Item app/build/app/outputs/flutter-apk/app-release.apk "dist/Remember-$env:RELEASE_VERSION-Android.apk"
+          python scripts/package_github_release.py --repo . --windows-release app/build/windows/x64/runner/Release --python-runtime $runtime --apk "dist/Remember-$env:RELEASE_VERSION-Android.apk" --output-dir dist --version $env:RELEASE_VERSION
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Smoke test portable backend
+        if: steps.gate.outputs.run == 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          $test = Join-Path $env:RUNNER_TEMP 'remember-smoke'
+          Expand-Archive -LiteralPath "dist/Remember-$env:RELEASE_VERSION-Windows-完整包.zip" -DestinationPath $test
+          $root = Join-Path $test 'Remember'
+          $proc = Start-Process -FilePath (Join-Path $root 'app.exe') -WorkingDirectory $root -PassThru
+          try {
+            $ok = $false
+            for ($i=0; $i -lt 40; $i++) {
+              Start-Sleep -Seconds 2
+              try { if ((Invoke-WebRequest 'http://127.0.0.1:8000/api/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) { $ok = $true; break } } catch {}
+            }
+            if (-not $ok -or $proc.HasExited) { throw 'Portable application/backend smoke test failed' }
+          } finally { if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force } }
+      - name: Save test artifacts
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Remember-${{ steps.gate.outputs.version }}
+          path: |
+            dist/*.apk
+            dist/*.zip
+          if-no-files-found: error
+      - name: Publish verified draft
+        if: steps.gate.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          python -m pip install requests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/publish_github_release.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Remove temporary signing file
+        if: always()
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'remember-signing.jks'
+          if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }

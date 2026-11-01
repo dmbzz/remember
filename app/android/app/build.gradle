@@ -4,7 +4,23 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+def ciSigning = System.getenv("REMEMBER_CI_SIGNING") == "true"
+def ciSigningKeys = ["REMEMBER_ANDROID_KEYSTORE_PATH", "REMEMBER_ANDROID_STORE_PASSWORD", "REMEMBER_ANDROID_KEY_ALIAS", "REMEMBER_ANDROID_KEY_PASSWORD"]
+if (ciSigning && ciSigningKeys.any { !System.getenv(it) }) {
+    throw new GradleException("CI signing requires all REMEMBER_ANDROID signing environment variables")
+}
+
 android {
+    signingConfigs {
+        if (ciSigning) {
+            ciRelease {
+                storeFile file(System.getenv("REMEMBER_ANDROID_KEYSTORE_PATH"))
+                storePassword System.getenv("REMEMBER_ANDROID_STORE_PASSWORD")
+                keyAlias System.getenv("REMEMBER_ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("REMEMBER_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     namespace = "com.classnotes.assistant"
     compileSdk = 34
     ndkVersion = flutter.ndkVersion
@@ -41,7 +57,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            signingConfig = ciSigning ? signingConfigs.ciRelease : signingConfigs.debug
             minifyEnabled = false
             shrinkResources = false
         }
