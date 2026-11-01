@@ -28,13 +28,13 @@ class Fake:
         if url.endswith('/releases/1') and method=='PATCH': self.patched=True; return Response({})
         raise AssertionError((method,url))
 class PublishTest(unittest.TestCase):
-    def execute(self, fake):
+    def execute(self, fake, recover=False):
         with tempfile.TemporaryDirectory() as temp:
             old=os.getcwd(); os.chdir(temp)
             try:
                 Path('dist').mkdir(); Path('dist/Remember-1.0.3-Android.apk').write_bytes(b'apk')
                 Path('dist/Remember-1.0.3-Windows-完整包.zip').write_bytes(b'zip')
-                env={'GITHUB_REPOSITORY':'owner/repo','GITHUB_SHA':SHA,'RELEASE_VERSION':'1.0.3','GITHUB_TOKEN':'not-a-real-token'}
+                env={'GITHUB_REPOSITORY':'owner/repo','GITHUB_SHA':SHA,'RELEASE_VERSION':'1.0.3','GITHUB_TOKEN':'not-a-real-token', 'RECOVER_DRAFT_ONLY':'true' if recover else 'false'}
                 with patch.dict(os.environ,env), patch.dict(sys.modules,{'requests':types.SimpleNamespace(Session=lambda:fake)}):
                     runpy.run_path(str(SCRIPT),run_name='__main__')
             finally: os.chdir(old)
@@ -53,4 +53,8 @@ class PublishTest(unittest.TestCase):
         fake.assets={'Remember-1.0.3-Android.apk':{'id':1,'name':'Remember-1.0.3-Android.apk','body':b'wrong'}}
         with self.assertRaises(ValueError): self.execute(fake)
         self.assertFalse(fake.patched); self.assertEqual(fake.assets['Remember-1.0.3-Android.apk']['body'],b'wrong')
+    def test_recovery_cannot_create_draft(self):
+        fake=Fake()
+        with self.assertRaisesRegex(ValueError, 'existing draft'): self.execute(fake, recover=True)
+        self.assertIsNone(fake.release); self.assertFalse(fake.patched)
 if __name__=='__main__': unittest.main()

@@ -57,7 +57,7 @@ def checked_inputs(root: Path, *, scope: str):
             'lib/site-packages/pip/_vendor/certifi/cacert.pem',
         }:
             raise ValueError(f'{scope} contains an unexpected PEM file: {rel}')
-        if scope == 'server application' and path.suffix.lower() in TEXT_SUFFIXES:
+        if scope in {'server application', 'public config resources'} and path.suffix.lower() in TEXT_SUFFIXES:
             safe_server_text(path, rel)
         yield path, rel
 
@@ -66,7 +66,7 @@ def copy_inputs(source: Path, dest: Path, *, scope: str):
     for path, rel in checked_inputs(source, scope=scope):
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        if scope == 'server application' and path.suffix.lower() in TEXT_SUFFIXES:
+        if scope in {'server application', 'public config resources'} and path.suffix.lower() in TEXT_SUFFIXES:
             target.write_bytes(safe_server_text(path, rel))
         else:
             shutil.copyfile(path, target)
@@ -175,6 +175,11 @@ def package(repo: Path, windows: Path, runtime: Path, apk: Path, output: Path, v
         copy_inputs(app, backend / 'server/app', scope='server application')
         copy_inputs(runtime, backend / 'runtime', scope='portable Python runtime')
         configure_runtime(backend / 'runtime')
+        # Only public, versioned runtime resources; never copy local/cloud configuration.
+        for resource in ('prompts', 'presets'):
+            copy_inputs(repo / 'server/config' / resource, backend / 'server/config' / resource, scope='public config resources')
+        if not (backend / 'server/config/prompts/note_fused.md').is_file():
+            raise ValueError('Built-in note prompt is missing')
         (backend / 'scripts').mkdir(parents=True)
         shutil.copyfile(launcher, backend / 'scripts/run_server_hidden.ps1')
         shutil.copyfile(apk, backend / '课堂学习助手.apk')

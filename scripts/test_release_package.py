@@ -8,6 +8,8 @@ class PackageTest(unittest.TestCase):
             root=Path(tmp); repo=root/'repo'; app=repo/'server/app'; app.mkdir(parents=True)
             for p in [app/'__init__.py', app/'main.py', repo/'scripts/ci_run_server_hidden.ps1', repo/'server/requirements-portable.txt']:
                 p.parent.mkdir(parents=True,exist_ok=True); p.write_text('# safe')
+            for n in ['prompts/note_fused.md','prompts/handoff_summary.md','presets/time_slots.yaml']:
+                p=repo/'server/config'/n; p.parent.mkdir(parents=True,exist_ok=True); p.write_text('original resource',encoding='utf-8')
             win=root/'win'
             for n in ['app.exe','flutter_windows.dll','data/app.so','data/icudtl.dat','data/flutter_assets/AssetManifest.bin']:
                 p=win/n; p.parent.mkdir(parents=True,exist_ok=True); p.write_bytes(b'fake')
@@ -22,6 +24,8 @@ class PackageTest(unittest.TestCase):
                 self.assertIn('Remember/backend/runtime/python.exe',names)
                 pth=z.read('Remember/backend/runtime/python313._pth').decode()
                 self.assertIn('../server',pth); self.assertIn('Lib/site-packages',pth); self.assertIn('import site',pth)
+                self.assertEqual(z.read('Remember/backend/server/config/prompts/note_fused.md'), b'original resource')
+                self.assertEqual(z.read('Remember/backend/server/config/presets/time_slots.yaml'), b'original resource')
                 config=z.read('Remember/backend/server/config/config.local.yaml').decode()
                 self.assertIn('data/recordings',config); self.assertNotIn('C:\\Users',config)
             (app/'config.user.yaml').write_text('private')

@@ -5,11 +5,12 @@ from urllib.parse import quote
 import requests
 
 repo = os.environ['GITHUB_REPOSITORY']
-sha = os.environ['GITHUB_SHA']
+sha = os.environ.get('RELEASE_COMMIT_SHA') or os.environ['GITHUB_SHA']
 version = os.environ['RELEASE_VERSION']
 if not re.fullmatch(r'\d+\.\d+\.\d+', version) or not re.fullmatch(r'[0-9a-f]{40}', sha):
     raise ValueError('Unsafe version or commit')
 tag = 'v' + version
+recover_only = os.environ.get('RECOVER_DRAFT_ONLY') == 'true'
 base = 'https://api.github.com/repos/' + repo
 session = requests.Session()
 session.headers.update({'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'],
@@ -37,6 +38,8 @@ def verify_ref():
 ref_url = base + '/git/ref/tags/' + quote(tag, safe='')
 r = session.get(ref_url, timeout=30)
 if r.status_code == 404:
+    if recover_only:
+        raise ValueError('Recovery requires the existing tag; refusing to create one')
     call('POST', base + '/git/refs', json={'ref':'refs/tags/'+tag, 'sha':sha})
 elif not r.ok:
     raise RuntimeError(f'Tag lookup failed: HTTP {r.status_code}')
@@ -52,7 +55,11 @@ matches = [r for r in releases if r['tag_name'] == tag]
 if len(matches) > 1: raise ValueError('Multiple releases with same tag')
 if matches:
     release = matches[0]
+    if recover_only and not release['draft']:
+        raise ValueError('Recovery requires the existing draft release')
 else:
+    if recover_only:
+        raise ValueError('Recovery requires the existing draft; refusing to create one')
     release = call('POST', base+'/releases', json={'tag_name':tag, 'target_commitish':sha,
         'name':'Remember '+version, 'draft':True, 'prerelease':False,
         'body':'Android 安装包与 Windows 完整包。下载后可用 SHA256SUMS 校验文件完整性。'}).json()
@@ -95,7 +102,7 @@ for p in files:
     print('Downloaded and verified:', p.name, local)
 verify_ref()
 if release['draft']:
-    call('PATCH', base+f"/releases/{release['id']}", json={'draft':False})
+    call('PATCH', base+f"/releases/{release['id']}", json={'draft':False, 'make_latest':'legacy'})
     print('Published verified release:', tag)
 else:
     print('Existing public release verified:', tag)

@@ -27,8 +27,8 @@ if event == 'push':
     else:
         raise ValueError('Both version and build code must increase together')
     publish = run
-elif event == 'workflow_dispatch' and mode in ('test', 'publish'):
-    run, publish = True, mode == 'publish'
+elif event == 'workflow_dispatch' and mode in ('test', 'publish', 'recover'):
+    run, publish = mode != 'recover', mode == 'publish'
 else:
     raise ValueError('Unsupported event or manual mode')
 version = '.'.join(map(str, current[:3]))

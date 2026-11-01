@@ -8,22 +8,33 @@ on:
         description: 'test builds only; publish creates a verified release'
         required: true
         type: choice
-        options: [test, publish]
+        options: [test, publish, recover]
         default: test
+      recover_run_id:
+        description: 'For recover: original Actions run ID'
+        required: false
+        type: string
+      recover_version:
+        description: 'For recover: original version, e.g. 1.2.3'
+        required: false
+        type: string
 permissions:
-  contents: write
+  contents: read
 concurrency:
-  group: remember-release-${{ github.ref }}
+  group: remember-release-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 120
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      publish: ${{ steps.gate.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.13'
           architecture: x64
@@ -32,12 +43,12 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           RELEASE_MODE: ${{ inputs.mode }}
         run: python scripts/release_gate.py
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         if: steps.gate.outputs.run == 'true'
         with:
           distribution: temurin
           java-version: '17'
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         if: steps.gate.outputs.run == 'true'
         with:
           flutter-version: '3.24.5'
@@ -116,38 +127,109 @@ jobs:
           $test = Join-Path $env:RUNNER_TEMP 'remember-smoke'
           Expand-Archive -LiteralPath "dist/Remember-$env:RELEASE_VERSION-Windows-完整包.zip" -DestinationPath $test
           $root = Join-Path $test 'Remember'
+          if (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue) { throw 'Port 8000 occupied before smoke test' }
           $proc = Start-Process -FilePath (Join-Path $root 'app.exe') -WorkingDirectory $root -PassThru
+          $backendPid = $null
           try {
             $ok = $false
             for ($i=0; $i -lt 40; $i++) {
               Start-Sleep -Seconds 2
-              try { if ((Invoke-WebRequest 'http://127.0.0.1:8000/api/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) { $ok = $true; break } } catch {}
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:8000/api/health' -TimeoutSec 2
+                $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction Stop | Select-Object -First 1
+                $backend = Get-Process -Id $listener.OwningProcess -ErrorAction Stop
+                $expected = [IO.Path]::GetFullPath((Join-Path $root 'backend\runtime\python.exe'))
+                if ($health.code -eq 0 -and $health.data.app -eq 'class_notes_assistant' -and $health.data.version -eq $env:RELEASE_VERSION -and $backend.Path -eq $expected) { $backendPid = $backend.Id; $ok = $true; break }
+              } catch {}
             }
             if (-not $ok -or $proc.HasExited) { throw 'Portable application/backend smoke test failed' }
-          } finally { if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force } }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+            if ($backendPid) { Stop-Process -Id $backendPid -Force -ErrorAction SilentlyContinue }
+          }
+          $sourcePrompt = Get-FileHash -Algorithm SHA256 'server/config/prompts/note_fused.md'
+          $packedPrompt = Get-FileHash -Algorithm SHA256 (Join-Path $root 'backend/server/config/prompts/note_fused.md')
+          if ($sourcePrompt.Hash -ne $packedPrompt.Hash) { throw 'Built-in note template differs from source' }
+          $python = Join-Path $root 'backend/runtime/python.exe'
+          & $python -c "from app.services.note_generation_service import NoteGenerationService, PROMPT_FILE; s=NoteGenerationService.__new__(NoteGenerationService); assert s._load_prompt_template()==PROMPT_FILE.read_text(encoding='utf-8')"
+          if ($LASTEXITCODE) { throw 'Packaged service failed to load its note template' }
       - name: Save test artifacts
         if: steps.gate.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: Remember-${{ steps.gate.outputs.version }}
           path: |
             dist/*.apk
             dist/*.zip
           if-no-files-found: error
-      - name: Publish verified draft
-        if: steps.gate.outputs.publish == 'true'
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ steps.gate.outputs.version }}
-        run: |
-          python -m pip install requests
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python scripts/publish_github_release.py
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Remove temporary signing file
         if: always()
         shell: pwsh
         run: |
           $path = Join-Path $env:RUNNER_TEMP 'remember-signing.jks'
           if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: Remember-${{ needs.build.outputs.version }}
+          path: dist
+      - run: python -m pip install requests==2.32.5
+      - name: Publish exact verified build artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        shell: pwsh
+        run: |
+          python scripts/publish_github_release.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+  recover:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'recover'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - id: source
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RECOVERY_RUN_ID: ${{ inputs.recover_run_id }}
+          RECOVERY_VERSION: ${{ inputs.recover_version }}
+        run: python scripts/recover_release.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: Remember-${{ steps.source.outputs.version }}
+          path: dist
+          run-id: ${{ inputs.recover_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: python -m pip install requests==2.32.5
+      - name: Resume with original build bytes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT_SHA: ${{ steps.source.outputs.source_sha }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          RECOVER_DRAFT_ONLY: 'true'
+        shell: pwsh
+        run: |
+          python scripts/publish_github_release.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

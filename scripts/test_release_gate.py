@@ -23,5 +23,6 @@ class GateTest(unittest.TestCase):
             self.assertNotEqual(run('1.0.3+43')[0], 0)
             self.assertNotEqual(run('1.0.2+44')[0], 0)
             self.assertEqual(run('1.0.2+43','workflow_dispatch','test')[1].splitlines()[:2], ['run=true','publish=false'])
+            self.assertEqual(run('1.0.2+43','workflow_dispatch','recover')[1].splitlines()[:2], ['run=false','publish=false'])
             self.assertNotEqual(run('1.0.3+44','workflow_dispatch','publish','refs/heads/other')[0],0)
 if __name__=='__main__': unittest.main()
