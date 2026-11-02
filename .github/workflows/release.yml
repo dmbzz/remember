@@ -265,4 +265,3 @@ jobs:
         run: |
           python scripts/publish_github_release.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
