@@ -20,6 +20,9 @@ on:
         type: string
 permissions:
   contents: read
+env:
+  # Python logs include Chinese artifact names on Windows runners.
+  PYTHONIOENCODING: utf-8
 concurrency:
   group: remember-release-${{ github.sha }}
   cancel-in-progress: false
