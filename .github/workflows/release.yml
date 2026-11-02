@@ -89,12 +89,20 @@ jobs:
         shell: pwsh
         run: |
           $buildTools = Get-ChildItem "$env:ANDROID_HOME\build-tools" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          Write-Host "Android build-tools: $($buildTools.Name)"
           $apk = 'app/build/app/outputs/flutter-apk/app-release.apk'
           $badging = & "$($buildTools.FullName)\aapt.exe" dump badging $apk
           if ($LASTEXITCODE -ne 0 -or ($badging -join "`n") -notmatch "package: name='com\.classnotes\.assistant'") { throw 'Unexpected APK package' }
           if (($badging -join "`n") -notmatch ("versionCode='" + [regex]::Escape($env:RELEASE_CODE) + "'") -or ($badging -join "`n") -notmatch ("versionName='" + [regex]::Escape($env:RELEASE_VERSION) + "'")) { throw 'Unexpected APK version' }
           $cert = & "$($buildTools.FullName)\apksigner.bat" verify --verbose --print-certs $apk
-          if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
+          $verifyExitCode = $LASTEXITCODE
+          # Print only public verification metadata, never certificate subjects.
+          foreach ($line in $cert) {
+            if ($line -match '^(Verified using v[0-9.]+ scheme \(.*\): (true|false)|Number of signers: [0-9]+)$') { Write-Host $line }
+            elseif ($line -match '^(Signer #[0-9]+|V[0-9.]+ Signer:|Signer \(minSdkVersion=[0-9]+, maxSdkVersion=[0-9]+\)) certificate SHA-256 digest: [0-9a-fA-F]{64}$') { Write-Host $line }
+            elseif ($line -match 'certificate SHA-256 digest:') { Write-Host 'Unrecognized certificate SHA-256 line format' }
+          }
+          if ($verifyExitCode -ne 0) { throw 'APK signature verification failed' }
           $signers = @($cert | Where-Object { $_ -match '^Signer #\d+ certificate SHA-256 digest:' })
           if ($signers.Count -ne 1) { throw 'Unexpected number of APK signers' }
           if ($signers[0] -notmatch '^Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$') { throw 'Unable to read the APK certificate fingerprint' }
