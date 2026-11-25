@@ -5,7 +5,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Course, ScheduleEntry
+from app.db.models import (Course, ScheduleEntry, Recording, Note, Courseware,
+                           TextbookPage, TextbookIndexEntry)
 from app.errors import ApiError, ErrorCode
 from app.schemas.schedule import CourseCreate, CourseUpdate
 
@@ -90,6 +91,10 @@ class CourseService:
     async def delete_course(self, course_id: str) -> None:
         """删除课程及其级联检查。"""
         course = await self.get_course(course_id)
+        for model in (Recording, Note, Courseware, TextbookPage, TextbookIndexEntry):
+            reference = await self.session.scalar(select(model.id).where(model.course_id == course_id).limit(1))
+            if reference is not None:
+                raise ApiError(ErrorCode.CONFLICT, '课程仍有关联录音、笔记或学习资料，不能删除；已有数据已保留')
         # 检查是否有关联课表条目
         stmt = select(ScheduleEntry).where(ScheduleEntry.course_id == course_id)
         entries = (await self.session.execute(stmt)).scalars().all()

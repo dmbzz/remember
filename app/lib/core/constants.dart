@@ -3,8 +3,8 @@ import 'dart:io' show Platform;
 /// 应用全局常量与配置项
 class AppConstants {
   static const String appName = 'Remember';
-  static const String appVersion = '1.0.2';
-  static const int appVersionCode = 43;
+  static const String appVersion = '1.0.6';
+  static const int appVersionCode = 47;
 
   /// 默认后端地址（**按平台**取，不能写死一个）。
   ///

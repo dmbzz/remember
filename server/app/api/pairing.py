@@ -10,6 +10,7 @@ from app.config import get_app_config
 from app.errors import ApiError, ErrorCode, error_response_body
 from app.schemas.common import StrictRequestModel, ok
 from app.services.pairing_service import PairingError, PairingService
+from app.services.upload_identity import upload_server_id
 
 router = APIRouter(prefix="/pairing", tags=["pairing"])
 
@@ -80,5 +81,4 @@ async def revoke_all(request: Request) -> dict:
 
 @router.get("/check", summary="检查手机连接状态")
 async def check_pairing(request: Request) -> dict:
-    _service(request)
-    return ok({"connected": True})
+    return ok({"connected": True, "server_id": upload_server_id(request.app)})

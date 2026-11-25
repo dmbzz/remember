@@ -15,7 +15,10 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import com.classnotes.assistant.MainActivity
+import com.classnotes.assistant.R
 import java.io.File
 import java.util.Timer
 import java.util.TimerTask
@@ -37,7 +40,15 @@ class AudioRecordService : Service() {
     private var isArmed = false
     private var startTimeMs: Long = 0L
     private var elapsedMs: Long = 0L
+    private var accumulatedActiveMs: Long = 0L
+    private var activeSegmentStartRealtimeMs: Long? = null
     private var currentSessionId: String? = null
+    private var automaticEndEpochMs: Long? = null
+    private var durationLimitMs: Long? = null
+    private var limitAction: String = LIMIT_ACTION_STOP
+    private var limitTriggered: Boolean = false
+
+    internal var elapsedRealtimeProvider: () -> Long = { SystemClock.elapsedRealtime() }
 
     private var timer: Timer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -66,6 +77,9 @@ class AudioRecordService : Service() {
                 val courseName = intent.getStringExtra(EXTRA_COURSE_NAME) ?: "课堂课程"
                 val sessionId = intent.getStringExtra(EXTRA_SESSION_ID) ?: "rec_auto_${System.currentTimeMillis()}"
                 this.currentCourseName = courseName
+                this.durationLimitMs = null
+                this.limitAction = LIMIT_ACTION_STOP
+                this.limitTriggered = false
                 val repo = RecordingRepository(this)
                 val file = repo.createAudioFile(sessionId, "aac")
                 start(sessionId, file)
@@ -81,14 +95,15 @@ class AudioRecordService : Service() {
         this.eventListener = listener
     }
 
-    private fun acquireWakeLock() {
+    private fun acquireWakeLock(requestedDurationMs: Long? = null) {
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val holdMs = maxOf(4 * 60 * 60 * 1000L, (requestedDurationMs ?: 0L) + 10 * 60 * 1000L)
         wakeLock = powerManager?.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "ClassNotes:AudioRecordWakeLock"
         )?.apply {
             setReferenceCounted(false)
-            acquire(4 * 60 * 60 * 1000L) // 最大持有4小时（覆盖最长四节连堂）
+            acquire(holdMs) // 默认至少4小时，定时录音时自动覆盖目标时长与缓冲
         }
     }
 
@@ -113,19 +128,57 @@ class AudioRecordService : Service() {
         }
     }
 
-    fun startManual(courseId: String, sessionId: String, file: File): Boolean {
+    fun startManual(
+        courseId: String,
+        sessionId: String,
+        file: File,
+        durationLimitMs: Long? = null,
+        limitAction: String = LIMIT_ACTION_STOP
+    ): Boolean {
+        if (isRecording) return false
+        if (durationLimitMs != null) {
+            require(durationLimitMs in MIN_DURATION_LIMIT_MS..MAX_DURATION_LIMIT_MS) {
+                "定时时长需在 1 分钟至 6 小时之间"
+            }
+        }
+        require(limitAction == LIMIT_ACTION_STOP || limitAction == LIMIT_ACTION_PAUSE) {
+            "不支持的到点动作：$limitAction"
+        }
+        automaticEndEpochMs = null
         currentCourseName = null
         currentCourseId = courseId
-        return start(sessionId, file)
+        this.durationLimitMs = durationLimitMs
+        this.limitAction = if (durationLimitMs != null) limitAction else LIMIT_ACTION_STOP
+        this.limitTriggered = false
+        val started = start(sessionId, file)
+        if (!started) {
+            this.durationLimitMs = null
+            this.limitAction = LIMIT_ACTION_STOP
+            this.limitTriggered = false
+        }
+        return started
     }
 
-    fun startAutomatic(courseName: String, courseId: String, sessionId: String): Boolean {
-        if (!isArmed || isRecording || AutoRecordAlarmStore.wasStarted(this, sessionId)) return false
+    fun startAutomatic(courseName: String, courseId: String, sessionId: String, endEpochMs: Long? = null,
+                       nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (!isArmed || AutoRecordAlarmStore.wasStarted(this, sessionId)) return false
+        // Equal-time START and STOP broadcasts have no ordering contract. Only an
+        // automatically started, already expired session may be handed over here.
+        if (isRecording && automaticEndEpochMs?.let { it <= nowMs } == true) {
+            stop()
+        }
+        if (isRecording) return false
         currentCourseName = courseName
         currentCourseId = courseId
+        durationLimitMs = null
+        limitAction = LIMIT_ACTION_STOP
+        limitTriggered = false
         val file = RecordingRepository(this).createAudioFile(sessionId, "aac")
         val started = start(sessionId, file)
-        if (started) AutoRecordAlarmStore.markStarted(this, sessionId)
+        if (started) {
+            automaticEndEpochMs = endEpochMs
+            AutoRecordAlarmStore.markStarted(this, sessionId)
+        }
         return started
     }
 
@@ -162,13 +215,15 @@ class AudioRecordService : Service() {
             this.recorder = rec
             rec.prepare()
             rec.start()
-            acquireWakeLock()
+            acquireWakeLock(durationLimitMs)
 
             this.recorder = rec
             this.isRecording = true
             this.isPaused = false
             this.startTimeMs = System.currentTimeMillis()
             this.elapsedMs = 0L
+            this.accumulatedActiveMs = 0L
+            this.activeSegmentStartRealtimeMs = elapsedRealtimeProvider()
 
             // 启动前台服务通知
             val notification = buildNotification(0L)
@@ -183,29 +238,81 @@ class AudioRecordService : Service() {
         }
     }
 
-    fun pause() {
+    private fun computeElapsedMs(): Long {
+        if (!isRecording) return elapsedMs
+        val segStart = activeSegmentStartRealtimeMs
+        if (isPaused || segStart == null) return accumulatedActiveMs
+        val delta = (elapsedRealtimeProvider() - segStart).coerceAtLeast(0L)
+        return accumulatedActiveMs + delta
+    }
+
+    fun pause(fromCountdown: Boolean = false): Boolean {
         if (isRecording && !isPaused && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try {
                 recorder?.pause()
+                accumulatedActiveMs = computeElapsedMs()
+                elapsedMs = accumulatedActiveMs
+                activeSegmentStartRealtimeMs = null
                 isPaused = true
-            } catch (_: Exception) {}
+                if (fromCountdown) {
+                    limitTriggered = true
+                }
+                updateNotification(elapsedMs)
+                val statusSnapshot = getStatus()
+                mainHandler.post {
+                    eventListener?.invoke("status", statusSnapshot)
+                    if (fromCountdown) {
+                        eventListener?.invoke("countdownPaused", statusSnapshot)
+                    }
+                }
+                return true
+            } catch (e: Exception) {
+                mainHandler.post {
+                    eventListener?.invoke(
+                        "error",
+                        mapOf("message" to (e.message ?: "暂停录音失败"))
+                    )
+                }
+                return false
+            }
         }
+        return false
     }
 
-    fun resume() {
+    fun resume(): Boolean {
         if (isRecording && isPaused && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try {
                 recorder?.resume()
+                activeSegmentStartRealtimeMs = elapsedRealtimeProvider()
                 isPaused = false
-            } catch (_: Exception) {}
+                updateNotification(computeElapsedMs())
+                val statusSnapshot = getStatus()
+                mainHandler.post {
+                    eventListener?.invoke("status", statusSnapshot)
+                }
+                return true
+            } catch (e: Exception) {
+                mainHandler.post {
+                    eventListener?.invoke(
+                        "error",
+                        mapOf("message" to (e.message ?: "继续录音失败"))
+                    )
+                }
+                return false
+            }
         }
+        return false
     }
 
-    fun stop(): Map<String, Any?> {
+    fun stop(emitAutoStopped: Boolean = true, stopReason: String? = null): Map<String, Any?> {
         stopTimer()
         val wasRecording = isRecording
-        val duration = elapsedMs
+        val finalElapsed = computeElapsedMs()
+        var duration = finalElapsed
         val file = currentFile
+        val sessionIdSnapshot = currentSessionId
+        val courseIdSnapshot = currentCourseId
+        val isCountdownStop = stopReason == STOP_REASON_COUNTDOWN
         var success = false
 
         try {
@@ -219,46 +326,87 @@ class AudioRecordService : Service() {
             recorder = null
             isRecording = false
             isPaused = false
+            elapsedMs = finalElapsed
+            accumulatedActiveMs = finalElapsed
+            activeSegmentStartRealtimeMs = null
+            automaticEndEpochMs = null
+            durationLimitMs = null
+            limitAction = LIMIT_ACTION_STOP
+            limitTriggered = false
         }
 
         if (isArmed) showForeground(buildIdleNotification())
         else stopForeground(STOP_FOREGROUND_REMOVE)
         releaseWakeLock()
+        if (success && file != null) {
+            val measured = RecordingRepository(this).durationMs(file)
+            if (measured > 0) duration = measured
+        }
 
-        if (success && currentSessionId?.startsWith("rec_auto_") == true) {
+        val shouldEmitAutoStopped = emitAutoStopped && success &&
+            (isCountdownStop || sessionIdSnapshot?.startsWith("rec_auto_") == true)
+        if (shouldEmitAutoStopped) {
             eventListener?.invoke("autoStopped", mapOf(
                 "filePath" to (file?.absolutePath ?: ""),
-                "courseId" to (currentCourseId ?: ""),
-                "classDate" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(startTimeMs))
+                "courseId" to (courseIdSnapshot ?: ""),
+                "durationMs" to duration,
+                "classDate" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(startTimeMs)),
+                "reason" to (stopReason ?: "schedule")
             ))
+        }
+        if (isCountdownStop && success) {
+            notifyCountdownCompleted(duration)
         }
 
         return mapOf(
-            "sessionId" to (currentSessionId ?: ""),
+            "sessionId" to (sessionIdSnapshot ?: ""),
             "filePath" to (file?.absolutePath ?: ""),
             "durationMs" to duration,
             "sizeBytes" to (file?.length() ?: 0L),
-            "courseId" to currentCourseId,
+            "courseId" to courseIdSnapshot,
             "classDate" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(startTimeMs)),
             "success" to success
         )
     }
 
     fun cancel() {
-        val file = currentFile
-        stop()
-        try {
-            if (file?.exists() == true) {
-                file.delete()
-            }
-        } catch (_: Exception) {}
+        discardRecording(currentSessionId ?: error("没有正在进行的录音"))
+    }
+
+    fun discardRecording(expectedSessionId: String): Boolean {
+        check(isRecording && currentSessionId == expectedSessionId) {
+            "当前录音已变化，请重新确认要删除的录音"
+        }
+        val file = currentFile ?: error("没有正在进行的录音")
+        val repository = RecordingRepository(this)
+        // Persist the intent before stopping. If deletion fails, recovery can
+        // offer deletion again without automatically uploading this recording.
+        repository.markDiscardRequested(file.absolutePath)
+        stop(emitAutoStopped = false)
+        return repository.deleteAudioFile(file.absolutePath)
+    }
+
+    fun deleteSavedRecording(filePath: String): Boolean {
+        return RecordingRepository(this).deleteAudioFile(
+            filePath, if (isRecording || recorder != null) currentFile else null)
     }
 
     fun getStatus(): Map<String, Any?> {
-        val maxAmp = try {
-            recorder?.maxAmplitude ?: 0
-        } catch (_: Exception) {
+        val maxAmp = if (isRecording && !isPaused) {
+            try {
+                recorder?.maxAmplitude ?: 0
+            } catch (_: Exception) {
+                0
+            }
+        } else {
             0
+        }
+        val currentElapsed = computeElapsedMs()
+        val activeLimit = if (isRecording) durationLimitMs else null
+        val remaining = if (activeLimit != null) {
+            (activeLimit - currentElapsed).coerceAtLeast(0L)
+        } else {
+            null
         }
         return mapOf(
             "isRecording" to isRecording,
@@ -266,9 +414,32 @@ class AudioRecordService : Service() {
             "isArmed" to isArmed,
             "courseId" to currentCourseId,
             "sessionId" to currentSessionId,
-            "elapsedMs" to elapsedMs,
-            "amplitude" to maxAmp
+            "elapsedMs" to currentElapsed,
+            "amplitude" to maxAmp,
+            "durationLimitMs" to activeLimit,
+            "remainingMs" to remaining,
+            "limitAction" to if (activeLimit != null) limitAction else null,
+            "limitTriggered" to (isRecording && limitTriggered)
         )
+    }
+
+    internal fun evaluateCountdownTick() {
+        if (!isRecording || isPaused) return
+        val current = computeElapsedMs()
+        elapsedMs = current
+        val limit = durationLimitMs
+        if (limit != null && !limitTriggered && current >= limit) {
+            if (limitAction == LIMIT_ACTION_PAUSE) {
+                pause(fromCountdown = true)
+            } else {
+                limitTriggered = true
+                stop(emitAutoStopped = true, stopReason = STOP_REASON_COUNTDOWN)
+                eventListener?.invoke("status", getStatus())
+            }
+            return
+        }
+        updateNotification(current)
+        eventListener?.invoke("status", getStatus())
     }
 
     private fun startTimer() {
@@ -277,11 +448,8 @@ class AudioRecordService : Service() {
         timer?.scheduleAtFixedRate(object : TimerTask() {
             override fun run() {
                 if (isRecording && !isPaused) {
-                    elapsedMs += 1000L
-                    updateNotification(elapsedMs)
                     mainHandler.post {
-                        val status = getStatus()
-                        eventListener?.invoke("status", status)
+                        evaluateCountdownTick()
                     }
                 }
             }
@@ -308,31 +476,83 @@ class AudioRecordService : Service() {
         }
     }
 
-    private fun buildNotification(elapsed: Long): Notification {
-        val seconds = (elapsed / 1000) % 60
-        val minutes = (elapsed / (1000 * 60)) % 60
-        val hours = elapsed / (1000 * 60 * 60)
-        val timeStr = if (hours > 0) {
+    private fun formatTime(ms: Long): String {
+        val totalSec = (ms / 1000L).coerceAtLeast(0L)
+        val seconds = totalSec % 60L
+        val minutes = (totalSec / 60L) % 60L
+        val hours = totalSec / 3600L
+        return if (hours > 0L) {
             String.format("%02d:%02d:%02d", hours, minutes, seconds)
         } else {
             String.format("%02d:%02d", minutes, seconds)
         }
+    }
 
-        val title = if (currentCourseName != null) "【自动录音】$currentCourseName" else "正在录制课堂音频"
+    private fun buildOpenRecordingPendingIntent(requestCode: Int): PendingIntent {
+        val launch = Intent(this, MainActivity::class.java)
+            .putExtra("open_recording", true)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(
+            this,
+            requestCode,
+            launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun buildNotification(elapsed: Long): Notification {
+        val timeStr = formatTime(elapsed)
+        val limit = durationLimitMs
+        val remaining = if (limit != null) (limit - elapsed).coerceAtLeast(0L) else null
+        val actionHint = if (limitAction == LIMIT_ACTION_PAUSE) "到点暂停" else "到点停止"
+
+        val title = when {
+            isPaused && limitTriggered -> "定时已到 · 录音已自动暂停"
+            isPaused -> "课堂录音已暂停"
+            currentCourseName != null -> "【自动录音】$currentCourseName"
+            limit != null -> "正在定时录音"
+            else -> "正在录制课堂音频"
+        }
+        val text = when {
+            isPaused && limitTriggered -> "已录制 $timeStr ｜ 返回应用可继续录音或停止并同步"
+            isPaused && remaining != null -> "已录制 $timeStr · 倒计时已暂停（剩余 ${formatTime(remaining)}）"
+            isPaused -> "已录制 $timeStr ｜ 返回应用可继续或停止录音"
+            remaining != null && !limitTriggered -> "已录制 $timeStr · 剩余 ${formatTime(remaining)}（$actionHint）"
+            else -> "已录制 $timeStr ｜ 锁屏与后台持续运行中"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText("已录制 $timeStr ｜ 锁屏与后台持续运行中")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_notification_remember)
+            .setContentIntent(buildOpenRecordingPendingIntent(NOTIFICATION_ID))
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private fun notifyCountdownCompleted(durationMs: Long) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("定时录音已自动停止")
+            .setContentText("已录制 ${formatTime(durationMs)}，音频已保存并等待同步")
+            .setSmallIcon(R.drawable.ic_notification_remember)
+            .setContentIntent(buildOpenRecordingPendingIntent(COUNTDOWN_DONE_NOTIFICATION_ID))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        try {
+            manager?.notify(COUNTDOWN_DONE_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {
+        }
     }
 
     private fun buildIdleNotification(): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("课堂自动录音已布防")
             .setContentText("到点录音需要此通知保持运行；关闭布防可停止")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_notification_remember)
+            .setContentIntent(buildOpenRecordingPendingIntent(NOTIFICATION_ID))
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -357,6 +577,13 @@ class AudioRecordService : Service() {
     companion object {
         const val CHANNEL_ID = "class_notes_audio_record_channel"
         const val NOTIFICATION_ID = 20260916
+        const val COUNTDOWN_DONE_NOTIFICATION_ID = 20260917
+
+        const val LIMIT_ACTION_STOP = "stop"
+        const val LIMIT_ACTION_PAUSE = "pause"
+        const val STOP_REASON_COUNTDOWN = "countdown"
+        const val MIN_DURATION_LIMIT_MS = 60 * 1000L
+        const val MAX_DURATION_LIMIT_MS = 6 * 60 * 60 * 1000L
 
         const val ACTION_START_AUTO_RECORD = "com.classnotes.assistant.ACTION_START_AUTO_RECORD"
         const val ACTION_STOP_AUTO_RECORD = "com.classnotes.assistant.ACTION_STOP_AUTO_RECORD"

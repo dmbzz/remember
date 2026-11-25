@@ -299,3 +299,308 @@ async def test_incomplete_retry_keeps_shards_and_old_output(env, monkeypatch):
     await dispatcher.execute(job.id)
     assert all((Path(cfg.output_dir) / name).read_bytes() == data for name, data in originals.items())
     assert len(list(Path(cfg.output_dir).glob("*.txt"))) == 2
+
+
+async def job_for(db, rid):
+    async with db.session_scope() as session:
+        return (await session.scalars(select(AsrJob).where(AsrJob.recording_id == rid))).one()
+
+
+async def test_cancel_queued_is_durable_idempotent_and_explicitly_retryable(env, monkeypatch):
+    client, db, dispatcher, *_ = env
+    rid, rec = await upload(env)
+    job = await job_for(db, rid)
+    response = await client.post(f'/api/asr/jobs/{job.id}/cancel')
+    assert response.status_code == 200
+    assert response.json()['data']['status'] == 'cancelled'
+    assert (await client.post(f'/api/asr/jobs/{job.id}/cancel')).json()['data']['status'] == 'cancelled'
+    monkeypatch.setattr(asr_jobs, 'infer', lambda *a: (_ for _ in ()).throw(AssertionError('cancelled must not start')))
+    await dispatcher.execute(job.id)
+    assert (await job_for(db, rid)).status == 'cancelled'
+    assert Path(rec['file_path']).is_file()
+    response = await client.post(f'/api/asr/jobs/{job.id}/retry')
+    assert response.status_code == 200 and response.json()['data']['status'] == 'queued'
+
+
+async def test_cancel_running_stops_owned_process_before_terminal_state(env, monkeypatch):
+    from app.services.asr_engine import run_process
+    import subprocess
+    client, db, dispatcher, cfg, _ = env
+    rid, rec = await upload(env)
+    job = await job_for(db, rid)
+    pid_file = dispatcher.work_root / 'sleep.pid'
+    def sleep_process(source, work, settings, stop):
+        command = 'import os,time;from pathlib import Path;Path(' + repr(str(pid_file)) + ').write_text(str(os.getpid()));time.sleep(60)'
+        run_process([sys.executable, '-c', command], work / 'sleep.log', stop)
+        return result()
+    monkeypatch.setattr(asr_jobs, 'infer', sleep_process)
+    execution = asyncio.create_task(dispatcher.execute(job.id))
+    for _ in range(300):
+        if pid_file.exists():
+            break
+        await asyncio.sleep(.01)
+    assert pid_file.exists()
+    pid = int(pid_file.read_text())
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        ctypes.windll.kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        ctypes.windll.kernel32.OpenProcess.restype = wintypes.HANDLE
+        ctypes.windll.kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        ctypes.windll.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = ctypes.windll.kernel32.OpenProcess(0x100000, False, pid)
+        assert handle
+    response = await client.post(f'/api/asr/jobs/{job.id}/cancel')
+    assert response.status_code == 200 and response.json()['data']['status'] == 'cancelling'
+    assert (await client.delete(f'/api/asr/jobs/{job.id}')).status_code == 409
+    await asyncio.wait_for(execution, 8)
+    assert (await job_for(db, rid)).status == 'cancelled'
+    if os.name == 'nt':
+        assert ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == 0
+        ctypes.windll.kernel32.CloseHandle(handle)
+    else:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    assert Path(rec['file_path']).is_file()
+    assert not list(Path(cfg.output_dir).glob('*.txt'))
+
+
+async def test_cancel_after_infer_success_cannot_publish_or_delete(env, monkeypatch):
+    client, db, dispatcher, cfg, _ = env
+    rid, rec = await upload(env)
+    job = await job_for(db, rid)
+    entered, release = threading.Event(), threading.Event()
+    def infer(*a):
+        entered.set()
+        assert release.wait(3)
+        return result()
+    monkeypatch.setattr(asr_jobs, 'infer', infer)
+    execution = asyncio.create_task(dispatcher.execute(job.id))
+    while not entered.is_set():
+        await asyncio.sleep(.01)
+    assert (await client.post(f'/api/asr/jobs/{job.id}/cancel')).json()['data']['status'] == 'cancelling'
+    release.set()
+    await execution
+    assert (await job_for(db, rid)).status == 'cancelled'
+    assert Path(rec['file_path']).is_file() and not list(Path(cfg.output_dir).iterdir())
+
+
+async def test_cancel_saving_refused_and_committed_result_stays_consistent(env, monkeypatch):
+    client, db, dispatcher, cfg, _ = env
+    rid, rec = await upload(env)
+    job = await job_for(db, rid)
+    entered, release = threading.Event(), threading.Event()
+    original = asr_jobs.publish
+    def publish(*args):
+        entered.set()
+        assert release.wait(3)
+        return original(*args)
+    monkeypatch.setattr(asr_jobs, 'infer', lambda *a: result())
+    monkeypatch.setattr(asr_jobs, 'publish', publish)
+    execution = asyncio.create_task(dispatcher.execute(job.id))
+    while not entered.is_set():
+        await asyncio.sleep(.01)
+    response = await client.post(f'/api/asr/jobs/{job.id}/cancel')
+    assert response.status_code == 409 and '保存' in response.json()['message']
+    release.set()
+    await execution
+    final = await job_for(db, rid)
+    assert final.status == 'completed' and final.result['source_deleted']
+    assert not Path(rec['file_path']).exists()
+
+
+async def test_restart_cancelling_becomes_cancelled_not_queued(env):
+    _, db, dispatcher, cfg, _ = env
+    cfg.enabled = False
+    save_settings(cfg)
+    cfg.enabled = True
+    save_settings(cfg)
+    rid, _ = await upload(env)
+    async with db.session_scope() as session:
+        job = (await session.scalars(select(AsrJob))).one()
+        job.status = 'cancelling'
+    await dispatcher.start()
+    await dispatcher.stop()
+    assert (await job_for(db, rid)).status == 'cancelled'
+
+
+async def test_task_delete_keeps_audio_outputs_and_tombstone_blocks_duplicate_upload(env):
+    client, db, _, cfg, _ = env
+    rid, rec = await upload(env)
+    job = await job_for(db, rid)
+    assert (await client.delete(f'/api/asr/jobs/{job.id}')).status_code == 409
+    await client.post(f'/api/asr/jobs/{job.id}/cancel')
+    transcript = Path(cfg.output_dir) / 'existing.txt'
+    transcript.write_text('ORIGINAL TRANSCRIPT', 'utf-8')
+    ledger = Path(cfg.output_dir) / '00-转写完成清单.md'
+    ledger.write_text('ORIGINAL LEDGER', 'utf-8')
+    assert (await client.delete(f'/api/asr/jobs/{job.id}')).status_code == 200
+    assert (await client.delete(f'/api/asr/jobs/{job.id}')).status_code == 200
+    assert not (await client.get('/api/asr/jobs?all=true')).json()['data']
+    assert (await client.post(f'/api/asr/jobs/{job.id}/retry')).status_code == 404
+    assert Path(rec['file_path']).read_bytes() == b'test audio'
+    assert transcript.read_text('utf-8') == 'ORIGINAL TRANSCRIPT'
+    assert ledger.read_text('utf-8') == 'ORIGINAL LEDGER'
+    assert (await client.post(f'/api/recordings/{rid}/upload-file', files={'file': ('audio.wav', b'test audio')})).status_code == 200
+    assert (await job_for(db, rid)).status == 'deleted'
+
+
+@pytest.mark.parametrize('status', ['failed', 'incomplete', 'cancelled'])
+async def test_delete_failed_audio_is_idempotent_but_invalidates_cleanup_receipt(env, status):
+    client, db, dispatcher, cfg, _ = env
+    rid, rec = await upload(env)
+    async with db.session_scope() as session:
+        job = (await session.scalars(select(AsrJob))).one()
+        job.status = status
+    transcript = Path(cfg.output_dir) / 'old.txt'
+    transcript.write_bytes(b'KEEP')
+    response = await client.delete(f'/api/asr/jobs/{job.id}/recording')
+    assert response.status_code == 200, response.text
+    value = response.json()['data']
+    assert value['result']['source_deleted'] and not value['can_retry'] and not value['can_delete_recording']
+    assert not Path(rec['file_path']).exists() and transcript.read_bytes() == b'KEEP'
+    again = await client.delete(f'/api/asr/jobs/{job.id}/recording')
+    assert again.status_code == 200
+    receipt = (await client.get(f'/api/recordings/{rid}')).json()['data']
+    assert receipt['file_path'] == rec['file_path'] and receipt['upload_status'] == 'pending' and receipt['deleted_at']
+    assert not receipt['cleanup_receipt']['verified']
+    assert receipt['size_bytes'] == len(b'test audio')
+    assert (await client.post(f'/api/asr/jobs/{job.id}/retry')).status_code == 409
+
+
+@pytest.mark.parametrize('change', ['bytes', 'path', 'outside', 'directory'])
+async def test_delete_failed_audio_refuses_replacements_and_unsafe_paths(env, tmp_path, change):
+    client, db, _, _, _ = env
+    rid, rec = await upload(env)
+    original = Path(rec['file_path'])
+    async with db.session_scope() as session:
+        job = (await session.scalars(select(AsrJob))).one()
+        job.status = 'failed'
+        recording = await session.get(Recording, rid)
+        if change == 'bytes':
+            original.write_bytes(b'NEW AUDIO')
+        elif change == 'path':
+            recording.file_path = str(tmp_path / 'different.wav')
+        elif change == 'outside':
+            outside = tmp_path / 'outside.wav'
+            outside.write_bytes(b'test audio')
+            job.source_path = recording.file_path = str(outside)
+            info = outside.stat()
+            job.source_size, job.source_mtime = info.st_size, info.st_mtime
+        else:
+            original.unlink()
+            original.mkdir()
+    response = await client.delete(f'/api/asr/jobs/{job.id}/recording')
+    assert response.status_code == 409, response.text
+    assert original.exists()
+    if change == 'bytes':
+        assert original.read_bytes() == b'NEW AUDIO'
+    if change == 'outside':
+        assert outside.read_bytes() == b'test audio'
+
+
+async def test_delete_audio_refuses_other_active_job_for_same_recording(env):
+    client, db, *_ = env
+    rid, rec = await upload(env)
+    async with db.session_scope() as session:
+        job = (await session.scalars(select(AsrJob))).one()
+        job.status = 'failed'
+        other = AsrJob(id=job.id+'other', recording_id=rid, source_sha256='0'*64, source_path=job.source_path,
+                       source_size=job.source_size, source_mtime=job.source_mtime, status='queued')
+        session.add(other)
+    assert (await client.delete(f'/api/asr/jobs/{job.id}/recording')).status_code == 409
+    assert Path(rec['file_path']).exists()
+
+
+async def test_delete_audio_refuses_active_upload_even_for_uploaded_receipt(env):
+    from app.services.upload_progress import active_uploads
+    client, db, *_ = env
+    rid, rec = await upload(env)
+    async with db.session_scope() as session:
+        job = (await session.scalars(select(AsrJob))).one()
+        job.status = 'failed'
+    active_uploads[rid] = {'phase': 'saving'}
+    try:
+        assert (await client.delete(f'/api/asr/jobs/{job.id}/recording')).status_code == 409
+        assert Path(rec['file_path']).exists()
+    finally:
+        active_uploads.pop(rid, None)
+
+
+async def test_upload_and_delete_share_commit_gate(env, monkeypatch):
+    client, db, dispatcher, *_ = env
+    rid, rec = await upload(env)
+    async with db.session_scope() as session:
+        job = (await session.scalars(select(AsrJob))).one()
+        job.status = 'failed'
+    await dispatcher.mutations.acquire()
+    uploading = asyncio.create_task(client.post(f'/api/recordings/{rid}/upload-file', files={'file': ('audio.wav', b'NEW AUDIO')}))
+    await asyncio.sleep(.05)
+    assert not uploading.done() and Path(rec['file_path']).read_bytes() == b'test audio'
+    dispatcher.mutations.release()
+    assert (await uploading).status_code == 200
+    assert (await client.delete(f'/api/asr/jobs/{job.id}/recording')).status_code == 409
+    assert Path(rec['file_path']).read_bytes() == b'NEW AUDIO'
+
+
+async def test_all_jobs_removes_old_limit_and_hides_deleted(env):
+    client, db, *_ = env
+    rid, _ = await upload(env)
+    original = await job_for(db, rid)
+    async with db.session_scope() as session:
+        for index in range(103):
+            session.add(AsrJob(id=f'history{index:03}', recording_id=rid, source_sha256=f'{index:064x}',
+                              source_path=original.source_path,source_size=original.source_size,
+                              source_mtime=original.source_mtime,status='deleted' if index==0 else 'failed'))
+    recent=(await client.get('/api/asr/jobs')).json()['data']
+    all_jobs=(await client.get('/api/asr/jobs?all=true')).json()['data']
+    assert len(recent)==100 and len(all_jobs)==103
+    assert all(x['status']!='deleted' for x in all_jobs)
+    assert all(set(('can_cancel','can_delete','can_delete_recording','can_retry')) <= x.keys() for x in all_jobs)
+
+
+async def test_failed_process_stop_keeps_cancelling_active_and_engine_owned(env, monkeypatch):
+    from app.services import asr_engine
+    from app.services.asr_process import ProcessStopFailed
+    client, db, dispatcher, cfg, _ = env
+    rid, rec = await upload(env)
+    job = await job_for(db, rid)
+    pid_file = dispatcher.work_root / 'held-sleep.pid'
+    failed, allow_stop = threading.Event(), threading.Event()
+    actual_stop = asr_engine.stop_owned_process
+    def held_stop(process, tree):
+        if not allow_stop.is_set():
+            failed.set()
+            raise ProcessStopFailed('模拟终止失败：尚未确认退出')
+        return actual_stop(process, tree)
+    monkeypatch.setattr(asr_engine, 'stop_owned_process', held_stop)
+    def sleep_process(source, work, settings, stop):
+        command = 'import os,time;from pathlib import Path;Path(' + repr(str(pid_file)) + ').write_text(str(os.getpid()));time.sleep(60)'
+        asr_engine.run_process([sys.executable, '-c', command], work / 'held-sleep.log', stop)
+        return result()
+    monkeypatch.setattr(asr_jobs, 'infer', sleep_process)
+    execution = asyncio.create_task(dispatcher.execute(job.id))
+    try:
+        for _ in range(300):
+            if pid_file.exists(): break
+            await asyncio.sleep(.01)
+        assert pid_file.exists()
+        response = await client.post(f'/api/asr/jobs/{job.id}/cancel')
+        assert response.status_code == 200 and response.json()['data']['status'] == 'cancelling'
+        for _ in range(100):
+            if failed.is_set(): break
+            await asyncio.sleep(.01)
+        assert failed.is_set()
+        assert (await job_for(db, rid)).status == 'cancelling'
+        assert not execution.done()
+        control = dispatcher.active[job.id]
+        assert control.processes and control.stop_error and control.cancelled.is_set()
+        assert (await client.delete(f'/api/asr/jobs/{job.id}')).status_code == 409
+        assert (await client.post(f'/api/asr/jobs/{job.id}/retry')).status_code == 409
+        assert (await client.delete(f'/api/asr/jobs/{job.id}/recording')).status_code == 409
+        assert Path(rec['file_path']).exists() and not list(Path(cfg.output_dir).iterdir())
+    finally:
+        allow_stop.set()
+        await asyncio.wait_for(execution, 8)
+    assert (await job_for(db, rid)).status == 'cancelled'
+    assert job.id not in dispatcher.active and not control.processes

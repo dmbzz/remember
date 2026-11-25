@@ -64,6 +64,38 @@ class AutoRecordBoundaryTest {
         AudioRecordService.activeInstance = null
     }
 
+    private fun checkAdjacentHandover(startFirst: Boolean) {
+        val record = service()
+        val firstStart = now - 1000L
+        val boundary = now + 1000L
+        var clock = now
+        val receiver = AutoRecordReceiver { clock }
+        receiver.onReceive(app, startIntent(firstStart, boundary))
+        clock = boundary
+        val next = startIntent(boundary, boundary + 60000L)
+        val previousStop = Intent(app, AutoRecordReceiver::class.java).apply {
+            action = AutoRecordReceiver.ACTION_AUTO_RECORD_STOP
+            putExtra(AutoRecordReceiver.EXTRA_SESSION_ID, "rec_auto_fictional_$firstStart")
+        }
+        if (startFirst) { receiver.onReceive(app, next); receiver.onReceive(app, previousStop) }
+        else { receiver.onReceive(app, previousStop); receiver.onReceive(app, next) }
+        assertEquals(true, record.getStatus()["isRecording"])
+        assertEquals("rec_auto_fictional_$boundary", record.getStatus()["sessionId"])
+        assertTrue(AutoRecordAlarmStore.wasStarted(app, "rec_auto_fictional_$boundary"))
+    }
+
+    @Test fun adjacentStartBeforeStopStillStartsNextClass() = checkAdjacentHandover(true)
+    @Test fun adjacentStopBeforeStartStillStartsNextClass() = checkAdjacentHandover(false)
+
+    @Test fun overlappingAutomaticClassIsNotReplacedEarly() {
+        val record = service()
+        val first = now - 1000L
+        AutoRecordReceiver().onReceive(app, startIntent(first, now + 60000L))
+        AutoRecordReceiver().onReceive(app, startIntent(now, now + 120000L))
+        assertEquals("rec_auto_fictional_$first", record.getStatus()["sessionId"])
+        assertEquals(true, record.getStatus()["isRecording"])
+    }
+
     @Test fun futureStartKeepsOriginalTimeAndAbsoluteEnd() {
         val start = now + 60000L
         val end = start + 3600000L

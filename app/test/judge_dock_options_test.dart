@@ -9,6 +9,7 @@ import 'package:class_notes_assistant/features/recording/recording_files_page.da
 import 'package:class_notes_assistant/features/recording/recording_page.dart';
 import 'package:class_notes_assistant/main.dart';
 import 'package:class_notes_assistant/platform/recording_bridge_stub.dart';
+import 'package:class_notes_assistant/platform/windows_startup_bridge.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -45,6 +46,8 @@ ApiClient apiFixture() {
       data = [];
     } else if (request.path.contains('paths')) {
       data = {'obsidian_root': 'D:/QA/笔记', 'recordings_root': 'D:/QA/录音'};
+    } else if (request.path.contains('settings/desktop')) {
+      data = {'asr_notifications': false};
     } else if (request.path.contains('version')) {
       data = {'has_update': false, 'version': '0.1.32', 'version_code': 33};
     }
@@ -58,6 +61,10 @@ Future<void> mount(WidgetTester tester, String page,
     {Size size = const Size(1000, 720), double scale = 1,
     bool mobile = false, bool reduce = false, double keyboard = 0}) async {
   SharedPreferences.setMockInitialValues({});
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      WindowsStartupBridge.channel, (call) async => false);
+  addTearDown(() => tester.binding.defaultBinaryMessenger
+      .setMockMethodCallHandler(WindowsStartupBridge.channel, null));
   await tester.runAsync(loadFonts);
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -79,6 +86,11 @@ Future<void> mount(WidgetTester tester, String page,
     home: StudyNavigationLayout(content: content, destinations: destinations,
         selectedIndex: page == 'settings' ? 3 : 2, onSelected: (_) {}),
   )));
+  await tester.pumpAndSettle();
+  // Drain the native/settings reads before measuring the final scroll extent.
+  await tester.runAsync(() async {
+    await Future<void>.delayed(Duration.zero);
+  });
   await tester.pumpAndSettle();
 }
 
@@ -150,6 +162,9 @@ void main() {
       scroll.position.jumpTo(scroll.position.maxScrollExtent);
       await tester.pumpAndSettle();
       noOptionsCovered(tester);
+      if (page == 'settings') {
+        expect(find.text('手动刷新检测更新').hitTestable(), findsOneWidget);
+      }
       tester.view.physicalSize = const Size(1000, 650);
       await tester.pumpAndSettle();
       noOptionsCovered(tester);

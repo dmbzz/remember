@@ -7,14 +7,14 @@ import android.content.Context
 import android.content.Intent
 
 /** Starts only an armed service; alarms never cold-start a microphone service. */
-class AutoRecordReceiver : BroadcastReceiver() {
+class AutoRecordReceiver(private val clock: () -> Long = System::currentTimeMillis) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         val sessionId = intent.getStringExtra(EXTRA_SESSION_ID) ?: return
         val service = AudioRecordService.activeInstance
         when (action) {
             ACTION_AUTO_RECORD_START -> {
-                val now = System.currentTimeMillis()
+                val now = clock()
                 val start = intent.getLongExtra(EXTRA_START_EPOCH_MS, now)
                 val end = intent.getLongExtra(EXTRA_END_EPOCH_MS,
                     start + intent.getLongExtra(EXTRA_DURATION_MS, 90 * 60 * 1000L))
@@ -24,7 +24,7 @@ class AutoRecordReceiver : BroadcastReceiver() {
                 if (!alreadyRecording && AutoRecordAlarmStore.wasStarted(context, sessionId)) return
                 val courseName = intent.getStringExtra(EXTRA_COURSE_NAME) ?: "课堂课程"
                 val courseId = intent.getStringExtra(EXTRA_COURSE_ID) ?: "course_default"
-                val started = alreadyRecording || service?.startAutomatic(courseName, courseId, sessionId) == true
+                val started = alreadyRecording || service?.startAutomatic(courseName, courseId, sessionId, end, now) == true
                 if (!started) {
                     val message = if (status?.get("isRecording") == true)
                         "当前已有录音，本节课未覆盖正在进行的录音；可进入应用检查"

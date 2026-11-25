@@ -73,6 +73,10 @@ class RecordingStatus {
   final int amplitude; // 0..32767，用于录音动画
   final String? courseId;
   final bool isArmed;
+  final int? durationLimitMs;
+  final int? remainingMs;
+  final String? limitAction;
+  final bool limitTriggered;
 
   const RecordingStatus({
     required this.isRecording,
@@ -82,6 +86,10 @@ class RecordingStatus {
     required this.amplitude,
     this.courseId,
     this.isArmed = false,
+    this.durationLimitMs,
+    this.remainingMs,
+    this.limitAction,
+    this.limitTriggered = false,
   });
 
   factory RecordingStatus.fromMap(Map<dynamic, dynamic> map) {
@@ -89,10 +97,14 @@ class RecordingStatus {
       isRecording: map['isRecording'] as bool? ?? false,
       isPaused: map['isPaused'] as bool? ?? false,
       sessionId: map['sessionId'] as String?,
-      elapsedMs: map['elapsedMs'] as int? ?? 0,
-      amplitude: map['amplitude'] as int? ?? 0,
+      elapsedMs: (map['elapsedMs'] as num?)?.toInt() ?? 0,
+      amplitude: (map['amplitude'] as num?)?.toInt() ?? 0,
       courseId: map['courseId'] as String?,
       isArmed: map['isArmed'] == true,
+      durationLimitMs: (map['durationLimitMs'] as num?)?.toInt(),
+      remainingMs: (map['remainingMs'] as num?)?.toInt(),
+      limitAction: map['limitAction'] as String?,
+      limitTriggered: map['limitTriggered'] == true,
     );
   }
 }
@@ -126,7 +138,7 @@ class PermissionStatus {
 
 /// 录音事件类型
 class RecordingEvent {
-  final String type; // 'amplitude' | 'error' | 'serviceKilled' | 'autoStopped'
+  final String type; // 'status' | 'amplitude' | 'error' | 'serviceKilled' | 'autoStopped' | 'countdownPaused'
   final dynamic payload;
 
   const RecordingEvent({required this.type, this.payload});
@@ -143,6 +155,8 @@ abstract class RecordingBridge {
     required String courseId,
     required String scheduleEntryId,
     String codec = 'aac',
+    int? durationLimitMs,
+    String? limitAction,
   });
   Future<void> pauseRecording();
   Future<void> resumeRecording();
@@ -215,14 +229,20 @@ class AndroidRecordingBridge implements RecordingBridge {
     required String courseId,
     required String scheduleEntryId,
     String codec = 'aac',
+    int? durationLimitMs,
+    String? limitAction,
   }) async {
+    final args = <String, dynamic>{
+      'courseId': courseId,
+      'scheduleEntryId': scheduleEntryId,
+      'codec': codec,
+      if (durationLimitMs != null) 'durationLimitMs': durationLimitMs,
+      if (durationLimitMs != null && limitAction != null)
+        'limitAction': limitAction,
+    };
     final res = await _methodChannel.invokeMethod<Map<dynamic, dynamic>>(
       'startRecording',
-      {
-        'courseId': courseId,
-        'scheduleEntryId': scheduleEntryId,
-        'codec': codec,
-      },
+      args,
     );
     return RecordingStartResult.fromMap(res ?? {});
   }

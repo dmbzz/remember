@@ -102,6 +102,7 @@ class _ClassNotesAppState extends State<ClassNotesApp>
           _uploadQueue.enqueue(
               filePath: path,
               courseId: course,
+              durationMs: (item['durationMs'] as num?)?.toInt() ?? 0,
               lesson: 1,
               classDate: item['classDate'] as String? ?? '');
         }
@@ -235,7 +236,10 @@ class _MainNavigationScaffoldState extends State<MainNavigationScaffold> {
           );
 
     final pages = [
-      SchedulePage(apiClient: widget.apiClient),
+      SchedulePage(
+        apiClient: widget.apiClient,
+        recordingBridge: widget.recordingBridge,
+      ),
       NotesPage(apiClient: widget.apiClient, noteChecks: widget.noteChecks),
       recordingTab,
       SettingsPage(
@@ -764,19 +768,15 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 20),
           if (Platform.isWindows) ...[
             _sectionLabel(context, '启动与通知'),
-            const WindowsStartupTile(),
-            WindowsStartupTile(
-              title: 'ASR 转写通知',
-              description: '转写开始、完成或失败时发送 Windows 通知；可随时关闭',
-              icon: Icons.notifications_outlined,
-              read: () async {
+            WindowsStartupGroup(
+              readNotifications: () async {
                 final result = await widget.apiClient.getDesktopSettings();
                 if (!result.ok || result.data?['asr_notifications'] is! bool) {
                   throw StateError('无法读取通知设置');
                 }
                 return result.data!['asr_notifications'] as bool;
               },
-              write: (enabled) async {
+              writeNotifications: (enabled) async {
                 final result =
                     await widget.apiClient.saveDesktopSettings(enabled);
                 if (!result.ok ||

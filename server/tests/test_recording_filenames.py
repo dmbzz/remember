@@ -52,8 +52,8 @@ async def test_chunks_use_same_naming_rule(tmp_path):
     rec = SimpleNamespace(id='rec_chunks', course=SimpleNamespace(name='线性代数'),
                           started_at=datetime(2026, 10, 12, 10, 5), file_path=None, codec='aac')
     service.get_recording = AsyncMock(return_value=rec)
-    await service.save_chunk(rec.id, 0, b'one')
-    await service.save_chunk(rec.id, 1, b'two')
+    await service.save_chunk(rec.id, 0, b'one', total_chunks=2)
+    await service.save_chunk(rec.id, 1, b'two', total_chunks=2)
     await service.complete_upload(rec.id)
     assert Path(rec.file_path).name == '线性代数_2026-10-12_10-05-00.aac'
     assert Path(rec.file_path).read_bytes() == b'onetwo'

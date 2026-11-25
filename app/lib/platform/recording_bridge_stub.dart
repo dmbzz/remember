@@ -4,7 +4,12 @@ import 'recording_bridge.dart';
 /// 桌面端与测试桩降级实现（不崩溃、模拟录音状态）
 class StubRecordingBridge implements RecordingBridge {
   bool _isRecording = false;
+  bool _isPaused = false;
   int _elapsed = 0;
+  String? _courseId;
+  int? _durationLimitMs;
+  String? _limitAction;
+  bool _limitTriggered = false;
   Timer? _timer;
   final StreamController<RecordingEvent> _controller =
       StreamController<RecordingEvent>.broadcast();
@@ -34,27 +39,79 @@ class StubRecordingBridge implements RecordingBridge {
   @override
   Future<void> openBatterySettings() async {}
 
+  RecordingStatus _snapshot() {
+    final activeLimit = _isRecording ? _durationLimitMs : null;
+    final remaining = activeLimit == null
+        ? null
+        : (activeLimit - _elapsed).clamp(0, activeLimit);
+    return RecordingStatus(
+      isRecording: _isRecording,
+      isPaused: _isPaused,
+      sessionId: _isRecording ? 'stub_session' : null,
+      elapsedMs: _elapsed,
+      amplitude: (_isRecording && !_isPaused) ? 1500 : 0,
+      courseId: _courseId,
+      durationLimitMs: activeLimit,
+      remainingMs: remaining,
+      limitAction: activeLimit != null ? _limitAction : null,
+      limitTriggered: _isRecording && _limitTriggered,
+    );
+  }
+
   @override
   Future<RecordingStartResult> startRecording({
     required String courseId,
     required String scheduleEntryId,
     String codec = 'aac',
+    int? durationLimitMs,
+    String? limitAction,
   }) async {
     _isRecording = true;
+    _isPaused = false;
     _elapsed = 0;
+    _courseId = courseId;
+    _durationLimitMs = durationLimitMs;
+    _limitAction = durationLimitMs != null ? (limitAction ?? 'stop') : null;
+    _limitTriggered = false;
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!_isRecording || _isPaused) return;
       _elapsed += 1000;
+      if (_durationLimitMs != null &&
+          !_limitTriggered &&
+          _elapsed >= _durationLimitMs!) {
+        _limitTriggered = true;
+        if (_limitAction == 'pause') {
+          _isPaused = true;
+          final snap = _snapshot();
+          _controller.add(RecordingEvent(type: 'status', payload: snap));
+          _controller
+              .add(RecordingEvent(type: 'countdownPaused', payload: snap));
+          return;
+        } else {
+          final finalElapsed = _elapsed;
+          final finalCourse = _courseId ?? '';
+          _isRecording = false;
+          _isPaused = false;
+          _durationLimitMs = null;
+          _limitAction = null;
+          _limitTriggered = false;
+          _timer?.cancel();
+          _controller.add(RecordingEvent(type: 'autoStopped', payload: {
+            'filePath': '/tmp/stub_audio.$codec',
+            'courseId': finalCourse,
+            'durationMs': finalElapsed,
+            'classDate': DateTime.now().toIso8601String().substring(0, 10),
+            'reason': 'countdown',
+          }));
+          _controller.add(RecordingEvent(type: 'status', payload: _snapshot()));
+          return;
+        }
+      }
       _controller.add(
         RecordingEvent(
           type: 'status',
-          payload: RecordingStatus(
-            isRecording: true,
-            isPaused: false,
-            sessionId: 'stub_session',
-            elapsedMs: _elapsed,
-            amplitude: 1500,
-          ),
+          payload: _snapshot(),
         ),
       );
     });
@@ -68,20 +125,33 @@ class StubRecordingBridge implements RecordingBridge {
   }
 
   @override
-  Future<void> pauseRecording() async {}
+  Future<void> pauseRecording() async {
+    if (!_isRecording || _isPaused) return;
+    _isPaused = true;
+    _controller.add(RecordingEvent(type: 'status', payload: _snapshot()));
+  }
 
   @override
-  Future<void> resumeRecording() async {}
+  Future<void> resumeRecording() async {
+    if (!_isRecording || !_isPaused) return;
+    _isPaused = false;
+    _controller.add(RecordingEvent(type: 'status', payload: _snapshot()));
+  }
 
   @override
   Future<RecordingResult> stopRecording() async {
     _isRecording = false;
+    _isPaused = false;
+    _durationLimitMs = null;
+    _limitAction = null;
+    _limitTriggered = false;
     _timer?.cancel();
     return RecordingResult(
       sessionId: 'stub_session',
       filePath: '/tmp/stub_audio.aac',
       durationMs: _elapsed,
       sizeBytes: _elapsed * 16,
+      courseId: _courseId,
       success: true,
     );
   }
@@ -89,18 +159,16 @@ class StubRecordingBridge implements RecordingBridge {
   @override
   Future<void> cancelRecording() async {
     _isRecording = false;
+    _isPaused = false;
+    _durationLimitMs = null;
+    _limitAction = null;
+    _limitTriggered = false;
     _timer?.cancel();
   }
 
   @override
   Future<RecordingStatus> getStatus() async {
-    return RecordingStatus(
-      isRecording: _isRecording,
-      isPaused: false,
-      sessionId: _isRecording ? 'stub_session' : null,
-      elapsedMs: _elapsed,
-      amplitude: _isRecording ? 1200 : 0,
-    );
+    return _snapshot();
   }
 
   @override

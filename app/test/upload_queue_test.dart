@@ -22,7 +22,25 @@ void main() {
       api.dio.interceptors
           .add(InterceptorsWrapper(onRequest: (options, handler) {
         final path = options.path;
-        if (path == '/api/recordings') {
+        if (path == '/api/pairing/check' || path.startsWith('/api/courses/')) {
+          handler.resolve(
+              Response(requestOptions: options, statusCode: 200, data: {
+            'code': 0,
+            'data': {'server_id': 'aaaaaaaaaaaaaaaa'}
+          }));
+        } else if (path.endsWith('/receipt')) {
+          handler.resolve(
+              Response(requestOptions: options, statusCode: 200, data: {
+            'code': 0,
+            'data': {
+              'recording_id': 'rec_test',
+              'server_id': 'aaaaaaaaaaaaaaaa',
+              'sha256': options.queryParameters['sha256'],
+              'size_bytes': 4,
+              'verified': uploaded,
+            }
+          }));
+        } else if (path == '/api/recordings') {
           handler.resolve(
               Response(requestOptions: options, statusCode: 200, data: {
             'code': 0,

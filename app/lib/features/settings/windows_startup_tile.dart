@@ -1,6 +1,39 @@
 import 'package:flutter/material.dart';
 import '../../platform/windows_startup_bridge.dart';
 
+/// Related settings share one outer shape so adjacent rows do not meet at
+/// separate rounded corners. The card also clips hover and focus feedback.
+class WindowsStartupGroup extends StatelessWidget {
+  const WindowsStartupGroup({
+    super.key,
+    this.readStartup,
+    this.writeStartup,
+    required this.readNotifications,
+    required this.writeNotifications,
+  });
+
+  final Future<bool> Function()? readStartup;
+  final Future<bool> Function(bool)? writeStartup;
+  final Future<bool> Function() readNotifications;
+  final Future<bool> Function(bool) writeNotifications;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        clipBehavior: Clip.antiAlias,
+        child: Column(children: [
+          WindowsStartupTile(read: readStartup, write: writeStartup),
+          const Divider(height: 1, indent: 64, endIndent: 20),
+          WindowsStartupTile(
+            title: 'ASR 转写通知',
+            description: '转写开始、完成或失败时发送 Windows 通知；可随时关闭',
+            icon: Icons.notifications_outlined,
+            read: readNotifications,
+            write: writeNotifications,
+          ),
+        ]),
+      );
+}
+
 class WindowsStartupTile extends StatefulWidget {
   const WindowsStartupTile(
       {super.key,
@@ -77,29 +110,25 @@ class _WindowsStartupTileState extends State<WindowsStartupTile>
   }
 
   @override
-  Widget build(BuildContext context) => Card(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SwitchListTile.adaptive(
-            secondary: Icon(widget.icon),
-            title: Text(widget.title),
-            subtitle: Text(widget.description),
-            value: _enabled ?? false,
-            onChanged: _busy || _enabled == null ? null : _set,
+  Widget build(BuildContext context) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SwitchListTile.adaptive(
+          secondary: Icon(widget.icon),
+          title: Text(widget.title),
+          subtitle: Text(widget.description),
+          value: _enabled ?? false,
+          onChanged: _busy || _enabled == null ? null : _set,
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              TextButton(
+                  onPressed: _busy ? null : _read, child: const Text('重新读取')),
+            ]),
           ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_error!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
-                    TextButton(
-                        onPressed: _busy ? null : _read,
-                        child: const Text('重新读取')),
-                  ]),
-            ),
-        ]),
-      );
+      ]);
 }

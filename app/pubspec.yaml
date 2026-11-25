@@ -1,7 +1,7 @@
 name: class_notes_assistant
 description: "Remember · 课表、笔记与课堂录音（Windows + Android）"
 publish_to: "none"
-version: 1.0.2+43
+version: 1.0.6+47
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -15,6 +15,7 @@ dependencies:
 
   # 网络与存储
   dio: ^5.4.0
+  crypto: ^3.0.6
   path_provider: ^2.1.2
   shared_preferences: ^2.2.2
 

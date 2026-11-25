@@ -80,6 +80,7 @@ class ApiClient {
   late final Dio dio;
   String baseUrl;
   String? pairingToken;
+  int connectionRevision = 0;
   void Function()? onConnectionReady;
 
   Future<ApiResult<List<Map<String, dynamic>>>> getRecordings() =>
@@ -103,6 +104,13 @@ class ApiClient {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
+          final revision = options.extra['connectionRevision'];
+          if (revision != null && revision != connectionRevision) {
+            return handler.reject(DioException(
+                requestOptions: options,
+                type: DioExceptionType.cancel,
+                message: '电脑连接已变化，已保留手机文件'));
+          }
           if (pairingToken != null && pairingToken!.isNotEmpty) {
             options.headers['Authorization'] = 'Bearer $pairingToken';
           }
@@ -113,11 +121,13 @@ class ApiClient {
   }
 
   void updateBaseUrl(String newUrl) {
+    if (baseUrl != newUrl) connectionRevision++;
     baseUrl = newUrl;
     dio.options.baseUrl = newUrl;
   }
 
   void updatePairingToken(String? token) {
+    if (pairingToken != token) connectionRevision++;
     pairingToken = token;
   }
 

@@ -22,11 +22,20 @@ import 'timetable_layout.dart';
 import 'schedule_import_sheet.dart';
 import '../recording/auto_recording_schedule.dart';
 import '../../platform/recording_bridge.dart';
+import 'schedule_auto_record_card.dart';
 
 class SchedulePage extends StatefulWidget {
   final ApiClient apiClient;
   final DateTime? referenceDate;
-  const SchedulePage({super.key, required this.apiClient, this.referenceDate});
+  final RecordingBridge? recordingBridge;
+  final bool? showAutoRecordQuickToggle;
+  const SchedulePage({
+    super.key,
+    required this.apiClient,
+    this.referenceDate,
+    this.recordingBridge,
+    this.showAutoRecordQuickToggle,
+  });
   @override
   State<SchedulePage> createState() => _SchedulePageState();
 }
@@ -44,6 +53,19 @@ class _SchedulePageState extends State<SchedulePage>
   List<LessonSlot> get _slots => _snapshot?.preferences.slots ?? schoolSlots;
   bool _layoutInitialized = false;
   Map<String, dynamic>? _selectedEntry;
+
+  // 本机到点自动录音快捷开关状态（仅 Android 展示，与录音页共享同一份状态快照）
+  AutoRecordingState _autoState = const AutoRecordingState();
+  int _autoToggleRevision = 0;
+  bool _autoSyncPending = false;
+  Future<void>? _autoSyncDrain;
+  RecordingBridge? _fallbackBridge;
+
+  bool get _showAutoRecordToggle =>
+      widget.showAutoRecordQuickToggle ?? Platform.isAndroid;
+  RecordingBridge get _recordingBridge =>
+      widget.recordingBridge ?? (_fallbackBridge ??= AndroidRecordingBridge());
+
   DateTime get _today => widget.referenceDate ?? DateTime.now();
   int get _currentWeek =>
       teachingWeek(_today, _snapshot?.semesterStart ?? DateTime(2026, 8, 31));
@@ -57,18 +79,87 @@ class _SchedulePageState extends State<SchedulePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (_showAutoRecordToggle) {
+      _autoState = AutoRecordingSchedule.stateNotifier.value;
+      AutoRecordingSchedule.stateNotifier.addListener(_onSharedAutoChanged);
+      unawaited(_initAutoRecordState());
+    }
     _load();
   }
 
   @override
   void dispose() {
+    if (_showAutoRecordToggle) {
+      AutoRecordingSchedule.stateNotifier
+          .removeListener(_onSharedAutoChanged);
+    }
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _load();
+    if (state == AppLifecycleState.resumed) {
+      _load();
+      if (_showAutoRecordToggle) {
+        unawaited(AutoRecordingSchedule.refreshArmed(_recordingBridge));
+      }
+    }
+  }
+
+  void _onSharedAutoChanged() {
+    if (!mounted || !_showAutoRecordToggle) return;
+    setState(() {
+      _autoState = AutoRecordingSchedule.stateNotifier.value;
+    });
+  }
+
+  Future<void> _initAutoRecordState() async {
+    await AutoRecordingSchedule.loadEnabled();
+    await AutoRecordingSchedule.refreshArmed(_recordingBridge);
+  }
+
+  Future<void> _toggleAutoRecord(bool value) async {
+    if (!_showAutoRecordToggle) return;
+    final revision = ++_autoToggleRevision;
+    if (value) {
+      final permission = await _recordingBridge.requestPermissions();
+      if (!mounted || revision != _autoToggleRevision) return;
+      if (!permission.recordAudio || !permission.notifications) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请先允许麦克风和通知权限，再开启本机自动录音')),
+        );
+        return;
+      }
+    }
+    if (!mounted || revision != _autoToggleRevision) return;
+    await AutoRecordingSchedule.setEnabled(value);
+    await _queueAutoRecordSync();
+  }
+
+  Future<void> _queueAutoRecordSync() {
+    _autoSyncPending = true;
+    return _autoSyncDrain ??=
+        _drainAutoRecordSync().whenComplete(() => _autoSyncDrain = null);
+  }
+
+  Future<void> _drainAutoRecordSync() async {
+    do {
+      _autoSyncPending = false;
+      await _syncAutoRecordOnce();
+    } while (_autoSyncPending);
+  }
+
+  Future<void> _syncAutoRecordOnce() async {
+    try {
+      await AutoRecordingSchedule.sync(
+        widget.apiClient,
+        _recordingBridge,
+        snapshot: _snapshot,
+      );
+    } catch (_) {
+      // 错误详情已由 AutoRecordingSchedule.stateNotifier 广播给本页快捷卡片与录音页。
+    }
   }
 
   Future<void> _load() async {
@@ -103,15 +194,13 @@ class _SchedulePageState extends State<SchedulePage>
       });
       try {
         await ScheduleWidgetBridge.sync(snapshot.toJson());
-        if (Platform.isAndroid) {
-          await AutoRecordingSchedule.sync(
-              widget.apiClient, AndroidRecordingBridge(),
-              snapshot: snapshot);
-        }
       } catch (_) {
-        if (mounted && Platform.isAndroid) {
-          setState(() => _error = '桌面课表或录音排期刷新失败，请重试同步');
+        if (mounted && _showAutoRecordToggle) {
+          setState(() => _error = '桌面课表小部件刷新失败，请重试同步');
         }
+      }
+      if (_showAutoRecordToggle) {
+        await _queueAutoRecordSync();
       }
     } catch (e) {
       if (mounted) {
@@ -163,12 +252,6 @@ class _SchedulePageState extends State<SchedulePage>
             semesterStart: _snapshot?.semesterStart ?? DateTime(2026, 8, 31)));
     if (message != null && mounted) {
       await _load();
-      if (Platform.isAndroid) {
-        try {
-          await AutoRecordingSchedule.sync(
-              widget.apiClient, AndroidRecordingBridge());
-        } catch (_) {/* 录音页可以再次布防并展示权限原因。 */}
-      }
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(message)));
@@ -340,12 +423,6 @@ class _SchedulePageState extends State<SchedulePage>
     }
     setState(() => _week = targetTeachingWeek);
     await _load();
-    if (Platform.isAndroid) {
-      try {
-        await AutoRecordingSchedule.sync(
-            widget.apiClient, AndroidRecordingBridge());
-      } catch (_) {/* 录音页可再次布防并显示具体权限原因。 */}
-    }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -432,7 +509,7 @@ class _SchedulePageState extends State<SchedulePage>
                                           ? '本手机自动录音'
                                           : '这门课自动录音'),
                                       subtitle: Text(Platform.isAndroid
-                                          ? '离线也可设置，还需在录音页开启布防'
+                                          ? '离线也可设置，还需开启本机到点自动录音'
                                           : '需在手机上开启录音权限'),
                                       value: entry['auto_record'] == true,
                                       onChanged: _saving
@@ -483,10 +560,13 @@ class _SchedulePageState extends State<SchedulePage>
                                                   await ScheduleWidgetBridge
                                                       .sync(
                                                           _snapshot!.toJson());
-                                                  await AutoRecordingSchedule.sync(
-                                                      widget.apiClient,
-                                                      AndroidRecordingBridge(),
-                                                      snapshot: _snapshot);
+                                                } catch (_) {}
+                                                try {
+                                                  await AutoRecordingSchedule
+                                                      .sync(
+                                                          widget.apiClient,
+                                                          _recordingBridge,
+                                                          snapshot: _snapshot);
                                                 } catch (e) {
                                                   if (context.mounted) {
                                                     ScaffoldMessenger.of(
@@ -509,7 +589,7 @@ class _SchedulePageState extends State<SchedulePage>
         const SizedBox(width: 12),
         Expanded(child: Text(text))
       ]));
-  Widget _dayList(DateTime start) {
+  Widget _dayList(DateTime start, {List<Widget> headerWidgets = const []}) {
     final day = _selectedDay ?? _today.weekday;
     final date = start.add(Duration(days: day - 1));
     final entries = _visible.where((e) => e['weekday'] == day).toList()
@@ -518,6 +598,7 @@ class _SchedulePageState extends State<SchedulePage>
         padding: EdgeInsets.fromLTRB(
             20, 0, 20, 16 + MediaQuery.paddingOf(context).bottom),
         children: [
+          ...headerWidgets,
           SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: [
@@ -671,7 +752,7 @@ class _SchedulePageState extends State<SchedulePage>
             key: const ValueKey('schedule-course-backdrop'),
             behavior: HitTestBehavior.translucent,
             onTap: _closeDetails,
-            child: Platform.isWindows
+            child: Platform.isWindows && !_showAutoRecordToggle
                 ? ScheduleAnchorView(
                     entries: _visible,
                     slots: _slots,
@@ -747,6 +828,29 @@ class _SchedulePageState extends State<SchedulePage>
     });
   }
 
+  void _showInvalidCoursesSheet(List<Map<String, dynamic>> invalid) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final entry in invalid)
+              ListTile(
+                title: Text('${entry['course_name']}'),
+                subtitle: Text(
+                    '${entry['start_time'] ?? '时间待定'} — ${entry['end_time'] ?? '时间待定'}'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _open(entry);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final start = (_snapshot?.semesterStart ?? DateTime(2026, 8, 31))
@@ -754,12 +858,57 @@ class _SchedulePageState extends State<SchedulePage>
     final weekday =
         ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][_today.weekday - 1];
     final invalid = _visible.where((e) => !fitsGrid(e, slots: _slots)).toList();
+    final screenSize = MediaQuery.sizeOf(context);
+    final screenTextScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final compactAppBar = _showAutoRecordToggle &&
+        screenSize.height < 460 &&
+        screenSize.width > screenSize.height;
+    final compactTitleBar = compactAppBar ||
+        (_showAutoRecordToggle && _dayMode == false && screenTextScale >= 1.5);
+    final hasOfflineOrError =
+        _snapshot != null && (_snapshot!.offline || _error != null);
     return Scaffold(
-      appBar: AppBar(title: const Text('课表'), actions: [
+      appBar: AppBar(
+          title: Text(
+            compactTitleBar ? '课表 · 第 $_viewWeek 周 · $weekday' : '课表',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          toolbarHeight: compactAppBar ? 44 : null,
+          actions: [
+        if (compactTitleBar && hasOfflineOrError)
+          screenTextScale >= 1.5
+              ? IconButton(
+                  key: const Key('schedule-compact-offline-btn'),
+                  tooltip: _error ?? '离线课表 · 点击重试同步',
+                  onPressed: _load,
+                  icon: const Icon(Icons.cloud_off_outlined, size: 20),
+                )
+              : TextButton.icon(
+                  key: const Key('schedule-compact-offline-btn'),
+                  onPressed: _load,
+                  icon: const Icon(Icons.cloud_off_outlined, size: 16),
+                  label: Text(_error != null ? '同步失败·重试' : '离线课表·重试'),
+                ),
+        if (compactTitleBar && invalid.isNotEmpty)
+          screenTextScale >= 1.5
+              ? IconButton(
+                  key: const Key('schedule-compact-invalid-btn'),
+                  tooltip: '${invalid.length} 条课程在网格外，点击查看',
+                  onPressed: () => _showInvalidCoursesSheet(invalid),
+                  icon: const Icon(Icons.event_note_outlined, size: 20),
+                )
+              : TextButton.icon(
+                  key: const Key('schedule-compact-invalid-btn'),
+                  onPressed: () => _showInvalidCoursesSheet(invalid),
+                  icon: const Icon(Icons.event_note_outlined, size: 16),
+                  label: Text('${invalid.length} 条网格外'),
+                ),
         PopupMenuButton<String>(
           tooltip: '课表设置',
           onSelected: (v) {
             if (v == 'refresh') _load();
+            if (v == 'import') _import();
             if (v == 'name') _settings();
             if (v == 'today') setState(() => _week = null);
             if (v == 'widget') _pinWidget();
@@ -767,6 +916,7 @@ class _SchedulePageState extends State<SchedulePage>
           itemBuilder: (_) => [
             const PopupMenuItem(value: 'refresh', child: Text('同步课表')),
             const PopupMenuItem(value: 'today', child: Text('回到本周')),
+            const PopupMenuItem(value: 'import', child: Text('导入课表')),
             const PopupMenuItem(value: 'name', child: Text('设定课表')),
             if (Platform.isAndroid)
               const PopupMenuItem(value: 'widget', child: Text('添加 2×2 桌面课表'))
@@ -776,16 +926,42 @@ class _SchedulePageState extends State<SchedulePage>
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _snapshot == null
-              ? Center(
-                  child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Text(_error ?? '无法加载课表'),
-                        const SizedBox(height: 16),
-                        FilledButton(onPressed: _load, child: const Text('重试'))
-                      ])))
+              ? Column(
+                  children: [
+                    if (_showAutoRecordToggle)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                        child: ScheduleAutoRecordCard(
+                          enabled: _autoState.enabled,
+                          armed: _autoState.armed,
+                          syncing: _autoState.syncing,
+                          scheduledCount: _autoState.scheduledCount,
+                          errorText: _autoState.error,
+                          onChanged: _toggleAutoRecord,
+                        ),
+                      ),
+                    Expanded(
+                      child: Center(
+                          child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(_error ?? '无法加载课表'),
+                                    const SizedBox(height: 16),
+                                    FilledButton(
+                                        onPressed: _load,
+                                        child: const Text('重试'))
+                                  ]))),
+                    ),
+                  ],
+                )
               : LayoutBuilder(builder: (context, box) {
                   final wide = box.maxWidth >= 850;
+                  final compactLandscape =
+                      box.maxHeight < 460 && box.maxWidth > box.maxHeight;
+                  final textScale =
+                      MediaQuery.textScalerOf(context).scale(14) / 14;
                   // A manual choice applies to this window width band. Crossing
                   // the breakpoint restores the adaptive view in either direction.
                   if (Platform.isWindows &&
@@ -797,97 +973,212 @@ class _SchedulePageState extends State<SchedulePage>
                   _layoutInitialized = true;
                   final dayMode = _dayMode ?? !_wideLayout;
                   final headingTitle = '第 $_viewWeek 周 · $weekday';
+                  final weekEnd = start.add(const Duration(days: 6));
                   final headingSubtitle =
-                      '${start.year}.${start.month}.${start.day} — ${start.add(const Duration(days: 6)).month}.${start.add(const Duration(days: 6)).day}';
+                      '${start.year}.${start.month}.${start.day} — ${weekEnd.month}.${weekEnd.day}';
+                  final headingWidget = StudyHeading(
+                    title: headingTitle,
+                    subtitle: headingSubtitle,
+                    trailing: OutlinedButton.icon(
+                        onPressed: _import,
+                        icon: const Icon(Icons.file_upload_outlined),
+                        label: const Text('导入课表')),
+                  );
+                  final quickAutoCard = _showAutoRecordToggle
+                      ? ScheduleAutoRecordCard(
+                          enabled: _autoState.enabled,
+                          armed: _autoState.armed,
+                          syncing: _autoState.syncing,
+                          scheduledCount: _autoState.scheduledCount,
+                          errorText: _autoState.error,
+                          compact:
+                              compactLandscape || (!dayMode && textScale >= 1.5),
+                          onChanged: _toggleAutoRecord,
+                        )
+                      : null;
+                  final weekRangeText = compactLandscape && _showAutoRecordToggle
+                      ? '第$_viewWeek周 · ${start.month}.${start.day}-${weekEnd.month}.${weekEnd.day}'
+                      : '${start.month}.${start.day} — ${weekEnd.month}.${weekEnd.day}';
+                  final modeAndWeekBar = Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      spacing: 10,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: true, label: Text('当天')),
+                              ButtonSegment(value: false, label: Text('整周'))
+                            ],
+                            selected: {dayMode},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (values) =>
+                                setState(() => _dayMode = values.first)),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          IconButton(
+                              tooltip: '上一周',
+                              visualDensity: textScale >= 1.5
+                                  ? VisualDensity.compact
+                                  : VisualDensity.standard,
+                              onPressed: _viewWeek > 1
+                                  ? () => setState(() => _week = _viewWeek - 1)
+                                  : null,
+                              icon: const Icon(Icons.chevron_left)),
+                          Flexible(
+                            child: TextButton(
+                                onPressed: _pickWeek,
+                                child: Text(
+                                  weekRangeText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                )),
+                          ),
+                          IconButton(
+                              tooltip: '下一周',
+                              visualDensity: textScale >= 1.5
+                                  ? VisualDensity.compact
+                                  : VisualDensity.standard,
+                              onPressed: _viewWeek < 30
+                                  ? () => setState(() => _week = _viewWeek + 1)
+                                  : null,
+                              icon: const Icon(Icons.chevron_right)),
+                        ]),
+                      ]);
+                  final offlineBanner = (_snapshot!.offline || _error != null)
+                      ? Row(children: [
+                          const Icon(Icons.cloud_off_outlined, size: 16),
+                          const SizedBox(width: 6),
+                          Expanded(
+                              child: Text(
+                                  _error ??
+                                      '离线课表 · 上次同步 ${_snapshot!.updatedAt.month}/${_snapshot!.updatedAt.day}',
+                                  style: Theme.of(context).textTheme.bodySmall)),
+                          TextButton(onPressed: _load, child: const Text('重试'))
+                        ])
+                      : null;
+                  final invalidBanner = invalid.isNotEmpty
+                      ? TextButton(
+                          onPressed: () => _showInvalidCoursesSheet(invalid),
+                          child: Text('${invalid.length} 条课程在网格外或时间待完善，点击查看'))
+                      : null;
+
+                  // Android 当天模式统一放入单一滚动列表，确保 200% 大字号和矮屏零溢出。
+                  // 矮横屏下省去大号标题，将模式/周切换与紧凑快捷卡并排单行，让首节课程直接进入首屏。
+                  if (_showAutoRecordToggle && dayMode) {
+                    if (compactLandscape) {
+                      return _dayList(start, headerWidgets: [
+                        if (quickAutoCard != null && textScale < 1.5)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2, bottom: 8),
+                            child: Row(
+                              children: [
+                                Expanded(child: modeAndWeekBar),
+                                const SizedBox(width: 12),
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 330),
+                                  child: quickAutoCard,
+                                ),
+                              ],
+                            ),
+                          )
+                        else ...[
+                          if (quickAutoCard != null) ...[
+                            const SizedBox(height: 4),
+                            quickAutoCard,
+                          ],
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: modeAndWeekBar,
+                          ),
+                        ],
+                      ]);
+                    }
+                    return _dayList(start, headerWidgets: [
+                      const SizedBox(height: 4),
+                      headingWidget,
+                      if (quickAutoCard != null) ...[
+                        const SizedBox(height: 12),
+                        quickAutoCard,
+                      ],
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: modeAndWeekBar,
+                      ),
+                      if (offlineBanner != null) ...[
+                        offlineBanner,
+                        const SizedBox(height: 6),
+                      ],
+                      if (invalidBanner != null) invalidBanner,
+                    ]);
+                  }
+
+                  final largeWeekHeader =
+                      !dayMode && _showAutoRecordToggle && textScale >= 1.5;
+
                   return Column(children: [
-                    Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                        child: StudyHeading(
-                          title: headingTitle,
-                          subtitle: headingSubtitle,
-                          trailing: OutlinedButton.icon(
-                              onPressed: _import,
-                              icon: const Icon(Icons.file_upload_outlined),
-                              label: const Text('导入课表')),
-                        )),
-                    Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12),
-                        child: Wrap(
-                            alignment: WrapAlignment.spaceBetween,
-                            spacing: 14,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
+                    if (largeWeekHeader && quickAutoCard != null) ...[
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                            maxHeight: box.maxHeight *
+                                (compactLandscape ? 0.46 : 0.42)),
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              SegmentedButton<bool>(
-                                  segments: const [
-                                    ButtonSegment(
-                                        value: true, label: Text('当天')),
-                                    ButtonSegment(
-                                        value: false, label: Text('整周'))
-                                  ],
-                                  selected: {
-                                    dayMode
-                                  },
-                                  showSelectedIcon: false,
-                                  onSelectionChanged: (values) =>
-                                      setState(() => _dayMode = values.first)),
-                              Row(mainAxisSize: MainAxisSize.min, children: [
-                                IconButton(
-                                    tooltip: '上一周',
-                                    onPressed: _viewWeek > 1
-                                        ? () => setState(
-                                            () => _week = _viewWeek - 1)
-                                        : null,
-                                    icon: const Icon(Icons.chevron_left)),
-                                TextButton(
-                                    onPressed: _pickWeek,
-                                    child: Text(
-                                        '${start.month}.${start.day} — ${start.add(const Duration(days: 6)).month}.${start.add(const Duration(days: 6)).day}')),
-                                IconButton(
-                                    tooltip: '下一周',
-                                    onPressed: _viewWeek < 30
-                                        ? () => setState(
-                                            () => _week = _viewWeek + 1)
-                                        : null,
-                                    icon: const Icon(Icons.chevron_right)),
-                              ]),
-                            ])),
-                    if (_snapshot!.offline || _error != null)
+                              quickAutoCard,
+                              const SizedBox(height: 8),
+                              modeAndWeekBar,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ] else if (compactLandscape &&
+                        _showAutoRecordToggle &&
+                        quickAutoCard != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                        child: Row(
+                          children: [
+                            Expanded(child: modeAndWeekBar),
+                            const SizedBox(width: 12),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 340),
+                              child: quickAutoCard,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                          child: headingWidget),
+                      if (quickAutoCard != null)
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                              20, compactLandscape ? 6 : 10, 20, 0),
+                          child: quickAutoCard,
+                        ),
+                      Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: compactLandscape ? 6 : 12),
+                          child: modeAndWeekBar),
+                    ],
+                    if (offlineBanner != null &&
+                        !compactLandscape &&
+                        !largeWeekHeader)
                       Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Row(children: [
-                            const Icon(Icons.cloud_off_outlined, size: 16),
-                            const SizedBox(width: 6),
-                            Expanded(
-                                child: Text(
-                                    _error ??
-                                        '离线课表 · 上次同步 ${_snapshot!.updatedAt.month}/${_snapshot!.updatedAt.day}',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall)),
-                            TextButton(
-                                onPressed: _load, child: const Text('重试'))
-                          ])),
-                    if (invalid.isNotEmpty)
-                      TextButton(
-                          onPressed: () => showModalBottomSheet(
-                              context: context,
-                              builder: (sheet) => SafeArea(
-                                      child:
-                                          ListView(shrinkWrap: true, children: [
-                                    for (final entry in invalid)
-                                      ListTile(
-                                          title:
-                                              Text('${entry['course_name']}'),
-                                          subtitle: Text(
-                                              '${entry['start_time'] ?? '时间待定'} — ${entry['end_time'] ?? '时间待定'}'),
-                                          onTap: () {
-                                            Navigator.pop(sheet);
-                                            _open(entry);
-                                          })
-                                  ]))),
-                          child: Text('${invalid.length} 条课程在网格外或时间待完善，点击查看')),
-                    if (!dayMode || Platform.isWindows)
+                          child: offlineBanner),
+                    if (invalidBanner != null &&
+                        !compactLandscape &&
+                        !largeWeekHeader)
+                      invalidBanner,
+                    if ((!dayMode && !compactLandscape && !largeWeekHeader) ||
+                        (Platform.isWindows && !_showAutoRecordToggle))
                       Padding(
                           padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
                           child: Align(
@@ -897,7 +1188,8 @@ class _SchedulePageState extends State<SchedulePage>
                                   child: Opacity(
                                       opacity: dayMode ? 0 : 1,
                                       child: Text(
-                                          Platform.isWindows
+                                          Platform.isWindows &&
+                                                  !_showAutoRecordToggle
                                               ? '${_slots.length} 小节 · 向下滚动查看后续课程'
                                               : '${_slots.length} 小节 · 左右滑动查看整周课表',
                                           style: Theme.of(context)

@@ -62,7 +62,9 @@ class OfflineBridge extends StubRecordingBridge {
   Future<RecordingStartResult> startRecording(
       {required String courseId,
       required String scheduleEntryId,
-      String codec = 'aac'}) async {
+      String codec = 'aac',
+      int? durationLimitMs,
+      String? limitAction}) async {
     startedCourse = courseId;
     return RecordingStartResult(
         sessionId: 'test', filePath: file.path, startedAtMs: 1, codec: codec);

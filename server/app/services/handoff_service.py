@@ -81,7 +81,7 @@ FIXED_CONVENTIONS: tuple[str, ...] = (
 
 ENVIRONMENT_FACTS: tuple[str, ...] = (
     "Windows；Bash 环境损坏（dirname/mkdir 等命令不可用，脚本用 PowerShell）",
-    "Python 用项目 venv：python"
+    "Python 用项目 venv：server/.venv/Scripts/python.exe"
     "（依赖装于此；系统 Python 为 versions/3.13.12，未装依赖，勿直接用）",
     "脚本内必须 sys.stdout.reconfigure(encoding='utf-8')（路径含中文）",
     "GPU 为 AMD ROCm，不得假设 CUDA",

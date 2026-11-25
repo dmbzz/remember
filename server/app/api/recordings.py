@@ -13,6 +13,8 @@ from app.schemas.recording import RecordingCreate, RecordingResponse
 from app.services.recording_service import RecordingService
 from app.services.asr_jobs import enqueue_uploaded
 from app.services.upload_progress import reception_progress
+from app.services.recording_receipt import verify_receipt
+from app.services.upload_identity import upload_server_id
 
 __all__ = ["router"]
 
@@ -55,6 +57,7 @@ async def upload_recording_file(
     recording_id: str,
     request: Request,
     file: UploadFile = File(..., description="音频文件（如 aac, wav, m4a）"),
+    duration_ms: int | None = Form(None, ge=0),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """单文件直接上传（针对小型录音或已在本地的录音文件）。"""
@@ -68,6 +71,8 @@ async def upload_recording_file(
             file_bytes=content,
             filename=file.filename or "audio.aac",
         )
+        if duration_ms and rec.duration_ms <= 0:
+            rec.duration_ms = duration_ms
         await enqueue_uploaded(session, rec)
         await session.commit()
         if dispatcher:
@@ -120,4 +125,27 @@ async def get_recording(
     """根据 ID 获取录音详情。"""
     service = RecordingService(session)
     rec = await service.get_recording(recording_id)
-    return ok(RecordingResponse.model_validate(rec).model_dump())
+    data = RecordingResponse.model_validate(rec).model_dump()
+    receipt = await verify_receipt(session, rec)
+    # Older phones rely on these fields to decide whether to delete their copy.
+    # Do not mutate the durable DB receipt when a file has been moved externally.
+    if rec.upload_status == 'uploaded' and not receipt['verified']:
+        data['upload_status'] = 'pending'
+    data['cleanup_receipt'] = receipt
+    return ok(data)
+
+
+@router.get('/recordings/{recording_id}/receipt', summary='校验手机录音清理凭据')
+async def recording_receipt(
+    recording_id: str,
+    request: Request,
+    sha256: str = Query(pattern=r'^[a-f0-9]{64}$'),
+    size_bytes: int = Query(gt=0),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    dispatcher = getattr(request.app.state, 'asr_dispatcher', None)
+    async with dispatcher.mutations if dispatcher else asyncio.Lock():
+        rec = await RecordingService(session).get_recording(recording_id)
+        receipt = await verify_receipt(session, rec, expected_hash=sha256, expected_size=size_bytes)
+        receipt['server_id'] = upload_server_id(request.app)
+    return ok(receipt)

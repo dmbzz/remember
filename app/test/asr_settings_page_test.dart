@@ -30,6 +30,7 @@ class ReviewApi extends ApiClient {
   @override Future<ApiResult<List<Map<String, dynamic>>>> getAsrJobs() async => failJobs
       ? const ApiResult.failed('任务读取失败（模拟）')
       : ApiResult.ok([for (var index = 1; index <= jobCount; index++) {'id': 'qa-task-$index', 'source_name': jobCount == 1 ? '工程力学_2026-10-18_08-15-00.m4a' : '第$index节工程力学.m4a', 'status': queued ? 'queued' : 'failed', 'error': queued ? '' : '环境不可用，录音已保留。', 'result': {}}]);
+  @override Future<ApiResult<List<Map<String, dynamic>>>> getAllAsrJobs() => getAsrJobs();
   @override Future<ApiResult<Map<String, dynamic>>> saveAsrSettings(Map<String, dynamic> value) async {
     saves++;
     return saving == null ? ApiResult.ok(config()) : await saving!.future;
@@ -157,7 +158,7 @@ void main() {
     await tester.tap(find.text('手动重试'));
     await tester.pumpAndSettle();
     expect(find.text('重试失败（模拟），音频保留'), findsOneWidget);
-    expect(find.text('转写失败，音频保留'), findsOneWidget);
+    expect(find.text('转写失败'), findsOneWidget);
     expect(find.text('等待转写'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -182,6 +183,10 @@ void main() {
   testWidgets('独立ASR任务列表末端重试失败在当前操作位置可见', (tester) async {
     final api = ReviewApi()..failRetry = true..jobCount = 15;
     final key = await mount(tester, api, editable: false);
+    await tester.ensureVisible(find.text('查看全部'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('查看全部'));
+    await tester.pumpAndSettle();
     final source = find.text('第15节工程力学.m4a');
     await tester.scrollUntilVisible(source, 600, scrollable: find.byType(Scrollable).first);
     final card = find.ancestor(of: source, matching: find.byType(Card));

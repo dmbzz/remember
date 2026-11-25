@@ -39,6 +39,7 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
     private var pendingSchedule: Pair<MethodCall, MethodChannel.Result>? = null
 
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -54,7 +55,7 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
                 onMethodCall(call, result)
             }
             audioService?.setEventListener { type, data ->
-                activity?.runOnUiThread {
+                mainHandler.post {
                     eventSink?.success(mapOf("type" to type, "payload" to data))
                 }
             }
@@ -128,10 +129,34 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
                 }
                 val courseId = call.argument<String>("courseId") ?: "unknown"
                 val codec = call.argument<String>("codec") ?: "aac"
+                val rawLimit = call.argument<Number>("durationLimitMs")?.toLong()
+                val rawAction = call.argument<String>("limitAction")
+                if (rawLimit != null && (rawLimit < AudioRecordService.MIN_DURATION_LIMIT_MS || rawLimit > AudioRecordService.MAX_DURATION_LIMIT_MS)) {
+                    result.error("INVALID_ARGS", "定时时长需在 1 分钟至 6 小时之间", null)
+                    return
+                }
+                if (rawAction != null &&
+                    rawAction != AudioRecordService.LIMIT_ACTION_STOP &&
+                    rawAction != AudioRecordService.LIMIT_ACTION_PAUSE
+                ) {
+                    result.error("INVALID_ARGS", "不支持的到点动作：$rawAction", null)
+                    return
+                }
+                val resolvedAction = if (rawLimit != null) {
+                    rawAction ?: AudioRecordService.LIMIT_ACTION_STOP
+                } else {
+                    AudioRecordService.LIMIT_ACTION_STOP
+                }
                 val sessionId = "rec_${courseId}_${System.currentTimeMillis()}"
                 val file = repository.createAudioFile(sessionId, codec)
 
-                val ok = audioService?.startManual(courseId, sessionId, file) ?: false
+                val ok = audioService?.startManual(
+                    courseId = courseId,
+                    sessionId = sessionId,
+                    file = file,
+                    durationLimitMs = rawLimit,
+                    limitAction = resolvedAction
+                ) ?: false
                 if (ok) {
                     try { context.startService(Intent(context, AudioRecordService::class.java)) }
                     catch (e: Exception) { audioService?.stop(); result.error("SERVICE_START_FAILED", e.message, null); return }
@@ -141,7 +166,9 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
                         "sessionId" to sessionId,
                         "filePath" to file.absolutePath,
                         "startedAtMs" to System.currentTimeMillis(),
-                        "codec" to codec
+                        "codec" to codec,
+                        "durationLimitMs" to rawLimit,
+                        "limitAction" to if (rawLimit != null) resolvedAction else null
                     ))
                 } else {
                     result.error("SERVICE_START_FAILED", "无法启动录音前台服务", null)
@@ -160,11 +187,40 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
                 result.success(res)
             }
             "cancelRecording" -> {
-                audioService?.cancel()
-                result.success(null)
+                try {
+                    val service = AudioRecordService.activeInstance ?: audioService
+                        ?: error("录音服务未就绪，请重试")
+                    service.cancel()
+                    result.success(null)
+                } catch (e: Exception) {
+                    result.error("RECORDING_DELETE_FAILED", e.message, null)
+                }
+            }
+            "discardRecording" -> {
+                try {
+                    val sessionId = call.argument<String>("sessionId")
+                        ?.takeIf { it.isNotBlank() } ?: error("缺少录音会话，请重新确认")
+                    val service = AudioRecordService.activeInstance ?: audioService
+                        ?: error("录音服务未就绪，请重试")
+                    result.success(service.discardRecording(sessionId))
+                } catch (e: Exception) {
+                    result.error("RECORDING_DELETE_FAILED", e.message, null)
+                }
+            }
+            "deleteRecordingFile" -> {
+                try {
+                    val filePath = call.argument<String>("filePath")
+                        ?: error("缺少录音路径")
+                    val service = AudioRecordService.activeInstance ?: audioService
+                    result.success(service?.deleteSavedRecording(filePath)
+                        ?: repository.deleteAudioFile(filePath))
+                } catch (e: Exception) {
+                    result.error("RECORDING_DELETE_FAILED", e.message, null)
+                }
             }
             "getStatus" -> {
-                result.success(audioService?.getStatus() ?: mapOf("isRecording" to false))
+                result.success((AudioRecordService.activeInstance ?: audioService)?.getStatus()
+                    ?: mapOf("isRecording" to false))
             }
             "listRecordingFiles" -> {
                 // The binder may still be connecting while the service records.
@@ -179,7 +235,9 @@ class RecordingBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Ev
                     val courseId = match?.groupValues?.get(2) ?: ""
                     val date = match?.groupValues?.get(4)?.let { "${it.substring(0,4)}-${it.substring(4,6)}-${it.substring(6,8)}" } ?: ""
                     mapOf("filePath" to file.absolutePath, "courseId" to courseId,
-                        "classDate" to date, "sizeBytes" to file.length())
+                        "classDate" to date, "sizeBytes" to file.length(),
+                        "durationMs" to repository.durationMs(file),
+                        "discardRequested" to repository.isDiscardRequested(file))
                 }
                 result.success(items)
             }

@@ -124,6 +124,42 @@ class UploadRecordCard extends StatelessWidget {
   final UploadQueue queue;
   final void Function(UploadItem)? onAssign;
   final bool desktopActions;
+
+  Future<void> _deleteLocal(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text('删除这段手机录音？'),
+              scrollable: true,
+              content: Text('${item.filePath.split(RegExp(r'[\\/]')).last}\n\n'
+                  '将永久删除手机上的这段录音，并停止后续同步，无法恢复。'
+                  '如果电脑已收到副本，电脑上的录音、转写和笔记会保留。'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('保留录音')),
+                TextButton(
+                    style: TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.error),
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('删除录音')),
+              ],
+            ));
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await queue.deleteLocalRecording(item.id);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('手机录音已删除，不再同步')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(item.error ?? '$e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final label = switch (item.status) {
@@ -137,6 +173,10 @@ class UploadRecordCard extends StatelessWidget {
           : item.retryable
               ? '等待连接电脑，稍后自动重试'
               : '需要处理，手机文件保留',
+      UploadStatus.deleting => queue.isDeletingLocalRecording(item.id)
+          ? '正在删除手机录音…'
+          : '已停止同步，等待删除手机录音',
+      UploadStatus.deleted => '手机录音已删除 · 不再同步',
     };
     return Card(
         child: Padding(
@@ -169,9 +209,25 @@ class UploadRecordCard extends StatelessWidget {
                       child: const Text('指定课程')),
                 if (desktopActions)
                   TextButton(
-                      onPressed: () => queue.remove(item.id),
+                      onPressed: item.status == UploadStatus.uploading
+                          ? null
+                          : () => queue.remove(item.id),
                       child: const Text('移除')),
+                if (!desktopActions &&
+                    item.status != UploadStatus.completed &&
+                    item.status != UploadStatus.deleted)
+                  TextButton.icon(
+                      style: TextButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                          minimumSize: const Size(48, 48)),
+                      onPressed: queue.canDeleteLocalRecording(item.id)
+                          ? () => _deleteLocal(context)
+                          : null,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('删除手机录音')),
               ]),
+              if (!desktopActions && item.status == UploadStatus.uploading)
+                const Text('正在上传，暂时无法删除手机录音'),
             ])));
   }
 }

@@ -63,3 +63,48 @@ async def test_shutdown_cancels_http_and_preserves_source(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError):
         await asyncio.wait_for(task, 2)
     assert closed.is_set() and source.read_bytes() == b'sample'
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows taskkill handling')
+@pytest.mark.parametrize('failure', ['exit_code', 'command_timeout', 'wait_timeout'])
+def test_stop_failure_never_confirms_process_exit(monkeypatch, failure):
+    import subprocess
+    from app.services import asr_process
+    class Process:
+        pid = 123
+        dead = False
+        def poll(self): return 0 if self.dead else None
+        def wait(self, timeout): raise subprocess.TimeoutExpired('owned worker', timeout)
+    class Tree:
+        def refresh(self): pass
+        def stop_children(self): pass
+        def confirmed(self): return process.dead
+    process, tree = Process(), Tree()
+    def command(*args, **kwargs):
+        if failure == 'command_timeout':
+            raise subprocess.TimeoutExpired('taskkill', 20)
+        return subprocess.CompletedProcess(args, 1 if failure == 'exit_code' else 0)
+    monkeypatch.setattr(asr_process.subprocess, 'run', command)
+    with pytest.raises(asr_process.ProcessStopFailed):
+        asr_process.stop_owned_process(process, tree, timeout=.001)
+    assert not tree.confirmed()
+    # A later confirmed exit can complete cleanup, rather than a permanent false error.
+    process.dead = True
+    asr_process.stop_owned_process(process, tree, timeout=.001)
+
+
+def test_parent_exit_alone_cannot_confirm_live_child(monkeypatch):
+    from app.services import asr_process
+    class Process:
+        pid = 123
+        def poll(self): return 0
+    class Tree:
+        child_alive = True
+        def refresh(self): pass
+        def stop_children(self): pass
+        def confirmed(self): return not self.child_alive
+    tree = Tree()
+    with pytest.raises(asr_process.ProcessStopFailed):
+        asr_process.stop_owned_process(Process(), tree, timeout=.001)
+    tree.child_alive = False
+    asr_process.stop_owned_process(Process(), tree, timeout=.001)

@@ -12,12 +12,12 @@ __all__ = ["router"]
 
 router = APIRouter(tags=["app_update"])
 
-CURRENT_APP_VERSION = "1.0.2"
-CURRENT_APP_VERSION_CODE = 43
+CURRENT_APP_VERSION = "1.0.6"
+CURRENT_APP_VERSION_CODE = 47
 RELEASE_NOTES = (
-    "1. 修复临上课开启自动录音时，排期刷新和开课边界导致漏录的问题\n"
-    "2. 当节课尚未结束时及时开始，仍在原定下课时间停止，避免重复录音\n"
-    "3. 应用显示名称统一为 Remember，保留笔记、课表、转写任务管理与已有配对"
+    "1. 课表首页新增「本机到点自动录音」醒目快捷开关，方便换手机录音时一键切换并实时区分真实布防状态\n"
+    "2. 录音页新增「定时录音」与实时倒计时，支持 45/90/100 分钟预设与自定义时长，到点可自动暂停或停止并同步\n"
+    "3. 合并 1.0.3 录音清理核验、连续课程自动录音交接与分片上传完整性保护修复"
 )
 
 APK_PATH = Path(__file__).resolve().parent.parent.parent.parent / "课堂学习助手.apk"

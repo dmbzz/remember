@@ -48,17 +48,17 @@ async def test_check_app_version_has_update(update_client: AsyncClient):
     assert res.status_code == 200
     data = res.json()
     assert data["code"] == 0
-    assert data["data"]["version"] == "1.0.2"
-    assert data["data"]["version_code"] == 43
+    assert data["data"]["version"] == "1.0.6"
+    assert data["data"]["version_code"] == 47
     assert data["data"]["has_update"] is True
     assert data["data"]["download_url"] == "/api/app/download"
-    assert "转写" in data["data"]["release_notes"]
+    assert "自动录音" in data["data"]["release_notes"]
 
 
 @pytest.mark.asyncio
 async def test_check_app_version_already_latest(update_client: AsyncClient):
     """测试客户端已是最新版本时返回 has_update=False。"""
-    res = await update_client.get("/api/app/version?current_code=43")
+    res = await update_client.get("/api/app/version?current_code=47")
     assert res.status_code == 200
     data = res.json()
     assert data["code"] == 0

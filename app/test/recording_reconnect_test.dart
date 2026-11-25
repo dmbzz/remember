@@ -87,7 +87,15 @@ void main() {
         }
         Object data;
         if (request.path == '/api/pairing/check') {
-          data = {'paired': true};
+          data = {'paired': true, 'server_id': 'aaaaaaaaaaaaaaaa'};
+        } else if (request.path.endsWith('/receipt')) {
+          data = {
+            'recording_id': 'test-reconnected',
+            'server_id': 'aaaaaaaaaaaaaaaa',
+            'sha256': request.queryParameters['sha256'],
+            'size_bytes': 4,
+            'verified': uploaded
+          };
         } else if (request.path == '/api/recordings') {
           data = {'id': 'test-reconnected'};
         } else if (request.path.endsWith('/upload-file')) {

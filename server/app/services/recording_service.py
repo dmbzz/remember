@@ -151,9 +151,16 @@ class RecordingService:
         if not chunk_files:
             raise ApiError(ErrorCode.VALIDATION_ERROR, "分片列表为空")
         manifest = chunks_dir / "upload.json"
-        expected = json.loads(manifest.read_text("utf-8"))["total_chunks"] if manifest.exists() else len(chunk_files)
+        expected = json.loads(manifest.read_text("utf-8"))["total_chunks"] if manifest.exists() else None
+        declared_size = getattr(rec, 'size_bytes', 0) or 0
+        if expected is None and declared_size <= 0:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, '请先提供总分片数或完整文件大小，再确认上传完成')
+        if expected is None:
+            expected = len(chunk_files)
         if {p.name for p in chunk_files} != {f"chunk_{i:05d}.part" for i in range(expected)}:
             raise ApiError(ErrorCode.VALIDATION_ERROR, "音频分片尚未完整接收，不能合并或开始转写")
+        if declared_size > 0 and sum(p.stat().st_size for p in chunk_files) != declared_size:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, '音频分片总大小与登记大小不一致，未确认上传')
 
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         ext = rec.codec or "aac"
@@ -167,6 +174,9 @@ class RecordingService:
                 data = cfile.read_bytes()
                 outfile.write(data)
                 total_size += len(data)
+        if declared_size > 0 and total_size != declared_size:
+            temporary_file.unlink(missing_ok=True)
+            raise ApiError(ErrorCode.VALIDATION_ERROR, '音频分片在合并时发生变化，未确认上传')
         temporary_file.replace(final_file)
 
         # 清理分片临时目录

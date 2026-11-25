@@ -22,6 +22,7 @@ from app.services.asr_lock import engine_lock
 from app.services.asr_progress import update_progress, read_progress
 from app.services.desktop_notifications import notify_asr
 from app.services.asr_task_control import JobControl, check_interrupted, begin_publish
+from app.services.audio_duration import audio_duration
 
 log = logging.getLogger(__name__)
 
@@ -182,11 +183,18 @@ class AsrDispatcher:
                         update_progress(work, "service")
                         result = await service_infer(source, cfg, control)
                         check_interrupted(control)
-                        expected = rec.duration_ms / 1000
-                        if expected <= 0 or abs(result["duration"] - expected) > max(2, expected * .01):
-                            result["coverage_complete"] = False
                         result["elapsed_sec"] = round(time.monotonic() - start, 2)
                         atomic_json(cached, result)
+                    # Old mobile queue entries may have no duration metadata.
+                    # Container duration is independent of the service response;
+                    # never assume a service's truncated output covers the source.
+                    expected = await asyncio.to_thread(audio_duration, source)
+                    expected = expected or rec.duration_ms / 1000
+                    # A reused cache may originate from a local engine. Its own
+                    # missing-shard evidence must never be promoted to complete
+                    # merely because the declared/container durations agree.
+                    duration_complete = expected > 0 and abs(result['duration'] - expected) <= max(2, expected * .01)
+                    result['coverage_complete'] = result.get('coverage_complete', True) and duration_complete
                     control.begin_publish()
                     update_progress(work, "saving")
                     result = await asyncio.to_thread(publish, source, work, generation, job.source_sha256, job.source_mtime, title, result, cfg)

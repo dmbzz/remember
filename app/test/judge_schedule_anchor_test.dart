@@ -142,7 +142,13 @@ void main() {
           final outer = tester.getRect(_card(id));
           final fields = [
             for (final type in ['title', 'room', 'time'])
-              tester.getRect(_field(type, id))
+              // Fully transparent time text keeps its layout node during the
+              // transition; it cannot cover another visible field.
+              if (!find
+                  .ancestor(of: _field(type, id), matching: find.byType(Opacity))
+                  .evaluate()
+                  .any((element) => (element.widget as Opacity).opacity == 0))
+                tester.getRect(_field(type, id))
           ];
           for (var a = 0; a < fields.length; a++) {
             expect(outer.inflate(.1).contains(fields[a].topLeft), isTrue);
