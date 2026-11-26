@@ -17,6 +17,7 @@ from app.config import AppConfig
 from app.errors import ApiError, ErrorCode
 from app.schemas.common import StrictRequestModel
 from app.services.note_file_sync_service import NoteFileSyncService
+from app.services.vault_notes_service import is_allowed_sync_suffix
 
 _lock = threading.RLock()
 Digest = str
@@ -85,7 +86,7 @@ class NoteChoiceService:
     def _path(self, path: str) -> Path:
         parts = path.split("/")
         reserved = {"CON", "PRN", "AUX", "NUL"} | {f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10)}
-        if (not path.lower().endswith(".md") or len(parts) > 17 or "\\" in path or ":" in path
+        if (not is_allowed_sync_suffix(path) or len(parts) > 17 or "\\" in path or ":" in path
                 or any(ord(c) < 32 for c in path) or any(p in ("", ".", "..") or p.startswith((".", "00-"))
                 or p == "转写原文" or p.endswith((" ", ".")) or p.split(".")[0].upper() in reserved for p in parts)):
             raise ApiError(ErrorCode.VALIDATION_ERROR, "无效的课堂笔记相对路径")

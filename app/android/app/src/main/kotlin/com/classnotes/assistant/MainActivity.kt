@@ -88,6 +88,16 @@ class MainActivity : FlutterActivity() {
                     try { val value = localNotes.read(call.argument<String>("id") ?: ""); runOnUiThread { result.success(value) } }
                     catch (e: Exception) { runOnUiThread { result.error("LOCAL_NOTE", e.message, null) } }
                 }.start()
+                "readAsset" -> Thread {
+                    try {
+                        val value = localNotes.readAsset(
+                            call.argument<String>("ref") ?: "",
+                            call.argument<String>("noteId"),
+                            call.argument<String>("course")
+                        )
+                        runOnUiThread { result.success(value) }
+                    } catch (e: Exception) { runOnUiThread { result.error("LOCAL_ASSET", e.message, null) } }
+                }.start()
                 else -> result.notImplemented()
             }
         }

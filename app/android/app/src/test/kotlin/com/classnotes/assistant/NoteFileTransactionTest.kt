@@ -119,4 +119,13 @@ class NoteFileTransactionTest {
         store.failDelete = false; sync.recover()
         assertEquals(1, store.files.size); assertNull(store.log)
     }
+    @Test fun image_attachment_install_preserves_png_extension_and_hashes() {
+        val store = Store()
+        val sync = NoteFileTransaction(store)
+        val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val id = sync.install("root", "图1-4.png", pngBytes, null, NoteFileTransaction.hash(pngBytes), false)
+        assertArrayEquals(pngBytes, store.read(id))
+        assertEquals(listOf("图1-4.png"), store.files.values.map { it.name })
+        assertNull(store.log)
+    }
 }

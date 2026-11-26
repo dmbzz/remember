@@ -1,7 +1,7 @@
 name: class_notes_assistant
 description: "Remember · 课表、笔记与课堂录音（Windows + Android）"
 publish_to: "none"
-version: 1.0.6+47
+version: 1.0.7+48
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

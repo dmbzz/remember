@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import '../core/constants.dart';
 import 'api_result.dart';
@@ -151,6 +152,30 @@ class ApiClient {
           String path, String hash, String vault) =>
       _getMap('/api/notes/file-sync/content',
           query: {'path': path, 'sha256': hash, 'vault_id': vault});
+
+  Future<ApiResult<Uint8List>> getNoteAsset(String ref,
+      {String? noteId, String? course}) async {
+    try {
+      final res = await dio.get<List<int>>(
+        '/api/notes/asset',
+        queryParameters: {
+          'ref': ref,
+          if (noteId != null && noteId.isNotEmpty) 'note_id': noteId,
+          if (course != null && course.isNotEmpty) 'course': course,
+        },
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = res.data;
+      if (res.statusCode == 200 && bytes != null && bytes.isNotEmpty) {
+        return ApiResult.ok(Uint8List.fromList(bytes));
+      }
+      return const ApiResult.failed('未找到笔记图片');
+    } on DioException catch (e) {
+      return ApiResult.failed(_dioError(e));
+    } catch (e) {
+      return ApiResult.failed('读取笔记图片失败：$e');
+    }
+  }
 
   Future<ApiResult<List<Map<String, dynamic>>>> getNoteChecks() =>
       _getList('/api/notes/local-checks');

@@ -6,7 +6,7 @@
 
 <p align="center"><strong>课表、课堂录音和笔记，都有一个可以回来的地方。</strong></p>
 
-<p align="center">Android · Windows &nbsp; | &nbsp; 当前版本 1.0.6</p>
+<p align="center">Android · Windows &nbsp; | &nbsp; 当前版本 1.0.7</p>
 
 Remember 是一款面向课堂学习的工具：在手机上查看课程、记录上课内容，回到电脑后同步录音并转写，再把笔记带在身边。它将课表、录音和阅读放在同一套工作流里，让复习时更容易找到需要的内容。
 

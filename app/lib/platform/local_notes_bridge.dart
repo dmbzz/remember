@@ -59,6 +59,16 @@ class LocalNotesBridge {
 
   static Future<String> read(String id) async =>
       await channel.invokeMethod<String>('readNote', {'id': id}) ?? '';
+
+  static Future<Uint8List?> readAsset(String ref,
+      {String? noteId, String? course}) async {
+    if (!Platform.isAndroid) return null;
+    return channel.invokeMethod<Uint8List>('readAsset', {
+      'ref': ref,
+      if (noteId != null) 'noteId': noteId,
+      if (course != null) 'course': course,
+    });
+  }
 }
 
 class NoteManifestDiff {

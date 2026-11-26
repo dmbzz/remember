@@ -74,13 +74,15 @@ class NoteFileTransaction(private val files: NoteDocuments) {
         require(before == expectedLocal) { "手机笔记在同步时发生变化，已停止覆盖" }
         if (before == remoteHash) return previous!!
         val tag = UUID.randomUUID().toString()
-        val stageName = ".cna-sync-stage-$tag.md"
+        val dot = name.lastIndexOf('.')
+        val ext = if (dot > 0) name.substring(dot) else ".md"
+        val stageName = ".cna-sync-stage-$tag$ext"
         val stage = files.create(parent, stageName)
         files.write(stage, bytes)
         require(hash(files.read(stage)) == remoteHash) { "手机存储校验失败，原文件未修改" }
         previous = files.find(parent, name)
         require(previous?.let { hash(files.read(it)) } == expectedLocal) { "手机笔记在同步时发生变化，已停止覆盖" }
-        val swap = NoteSwap(parent, name, stage, ".cna-sync-old-$tag.md", before, remoteHash, keepBackup, stageName)
+        val swap = NoteSwap(parent, name, stage, ".cna-sync-old-$tag$ext", before, remoteHash, keepBackup, stageName)
         files.journal(swap) // Durable before renaming the original.
         try {
             if (previous != null) files.rename(previous, swap.backupName)

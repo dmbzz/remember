@@ -12,12 +12,12 @@ __all__ = ["router"]
 
 router = APIRouter(tags=["app_update"])
 
-CURRENT_APP_VERSION = "1.0.6"
-CURRENT_APP_VERSION_CODE = 47
+CURRENT_APP_VERSION = "1.0.7"
+CURRENT_APP_VERSION_CODE = 48
 RELEASE_NOTES = (
-    "1. 课表首页新增「本机到点自动录音」醒目快捷开关，方便换手机录音时一键切换并实时区分真实布防状态\n"
-    "2. 录音页新增「定时录音」与实时倒计时，支持 45/90/100 分钟预设与自定义时长，到点可自动暂停或停止并同步\n"
-    "3. 合并 1.0.3 录音清理核验、连续课程自动录音交接与分片上传完整性保护修复"
+    "1. 笔记列表默认按标题/文件名中的时间顺序排列（最新在前），并支持一键切换「最新优先 / 从早到晚」且记住选择，无日期笔记自动排末尾\n"
+    "2. 阅读器原生支持 Obsidian ![[图片]]（含 |宽度）与标准 ![](...) 图片渲染，支持点击全屏放大缩放、平移与加载失败重试\n"
+    "3. 课堂笔记离线同步链路支持同步图片附件（.png/.jpg/.jpeg/.webp/.gif，含 _图 目录），手机离线也能正常看图且不混入笔记列表"
 )
 
 APK_PATH = Path(__file__).resolve().parent.parent.parent.parent / "课堂学习助手.apk"

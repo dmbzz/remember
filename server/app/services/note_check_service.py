@@ -12,7 +12,7 @@ from pydantic import Field, field_validator
 from app.config import AppConfig
 from app.errors import ApiError, ErrorCode
 from app.schemas.common import StrictRequestModel
-from app.services.vault_notes_service import VaultNotesService
+from app.services.vault_notes_service import VaultNotesService, is_allowed_sync_suffix
 
 _lock = threading.Lock()
 
@@ -28,8 +28,8 @@ class NoteCheckItem(StrictRequestModel):
         parts = value.split("/")
         if any(part in ("", ".", "..") for part in parts) or ":" in value or "\x00" in value or PurePosixPath(value).is_absolute():
             raise ValueError("笔记路径必须是课堂笔记内的规范相对路径")
-        if not value.lower().endswith(".md"):
-            raise ValueError("只核对 Markdown 笔记")
+        if not is_allowed_sync_suffix(value):
+            raise ValueError("只核对 Markdown 笔记与图片附件")
         return value
 
 

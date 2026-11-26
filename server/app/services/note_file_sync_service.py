@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 
 from app.config import AppConfig
 from app.errors import ApiError, ErrorCode
-from app.services.vault_notes_service import VaultNotesService
+from app.services.vault_notes_service import VaultNotesService, is_allowed_sync_suffix
 
 
 class NoteFileSyncService:
@@ -31,7 +31,7 @@ class NoteFileSyncService:
         parts = path.split("/")
         if (len(path) > 1024 or len(parts) > 17 or any(p in ("", ".", "..") or p.startswith((".", "00-")) for p in parts)
                 or "\\" in path or ":" in path or "\x00" in path or "转写原文" in parts[:-1]
-                or PurePosixPath(path).is_absolute() or not path.lower().endswith(".md")):
+                or PurePosixPath(path).is_absolute() or not is_allowed_sync_suffix(path)):
             raise ApiError(ErrorCode.VALIDATION_ERROR, "无效的课堂笔记相对路径")
         root = self.vault.notes_root.resolve()
         file = root.joinpath(*parts).resolve()

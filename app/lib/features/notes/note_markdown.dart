@@ -4,13 +4,20 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import '../../core/theme.dart';
 import 'mindmap_view.dart';
+import 'note_image_view.dart';
 import 'note_syntax.dart';
 
-/// 离线原生阅读器：Markdown、LaTeX 与 Mermaid mindmap。
+/// 离线原生阅读器：Markdown、LaTeX、课堂图片与 Mermaid mindmap。
 class NoteMarkdown extends StatelessWidget {
   final String data;
   final double fontSize;
-  const NoteMarkdown({super.key, required this.data, this.fontSize = 17});
+  final NoteImageLoader? imageLoader;
+  const NoteMarkdown({
+    super.key,
+    required this.data,
+    this.fontSize = 17,
+    this.imageLoader,
+  });
   @override
   Widget build(BuildContext context) =>
       LayoutBuilder(builder: (context, constraints) {
@@ -26,9 +33,21 @@ class NoteMarkdown extends StatelessWidget {
           selectable: false,
           fitContent: false,
           blockSyntaxes: [NoteMathBlockSyntax(), NoteMermaidSyntax()],
-          inlineSyntaxes: [NoteMathInlineSyntax()],
+          inlineSyntaxes: [NoteMathInlineSyntax(), NoteImageInlineSyntax()],
+          sizedImageBuilder: (config) {
+            final parsed =
+                parseMarkdownImage(config.alt ?? '', config.uri.toString());
+            return NoteImageView(
+              src: parsed.src,
+              alt: parsed.alt.isNotEmpty ? parsed.alt : (config.title ?? ''),
+              preferredWidth: config.width ?? parsed.width,
+              maxWidth: constraints.maxWidth,
+              loader: imageLoader,
+            );
+          },
           builders: {
-            'p': _ParagraphBuilder(body, constraints.maxWidth),
+            'p': _ParagraphBuilder(body, constraints.maxWidth, imageLoader),
+            'note-image': _NoteImageBuilder(constraints.maxWidth, imageLoader),
             'note-math': _MathBuilder(fontSize, constraints.maxWidth, false),
             'note-equation': _MathBuilder(fontSize, constraints.maxWidth, true),
             'note-mindmap': _MindmapBuilder(),
@@ -82,18 +101,63 @@ class NoteMarkdown extends StatelessWidget {
 class _ParagraphBuilder extends MarkdownElementBuilder {
   final TextStyle style;
   final double width;
-  _ParagraphBuilder(this.style, this.width);
+  final NoteImageLoader? imageLoader;
+  _ParagraphBuilder(this.style, this.width, this.imageLoader);
   @override
   Widget? visitText(md.Text text, TextStyle? preferredStyle) =>
       const SizedBox.shrink();
   @override
   bool isBlockElement() => true;
+
+  Widget _buildImageFromElement(md.Element item) {
+    if (item.tag == 'note-image') {
+      final src = item.attributes['src'] ?? '';
+      final alt = item.attributes['alt'] ?? '';
+      final w = double.tryParse(item.attributes['width'] ?? '');
+      return NoteImageView(
+        src: src,
+        alt: alt,
+        preferredWidth: w,
+        maxWidth: width,
+        loader: imageLoader,
+      );
+    }
+    final parsed = parseMarkdownImage(
+      item.attributes['alt'] ?? '',
+      item.attributes['src'] ?? '',
+    );
+    return NoteImageView(
+      src: parsed.src,
+      alt: parsed.alt.isNotEmpty ? parsed.alt : (item.attributes['title'] ?? ''),
+      preferredWidth: parsed.width,
+      maxWidth: width,
+      loader: imageLoader,
+    );
+  }
+
   @override
   Widget? visitElementAfterWithContext(BuildContext context, md.Element element,
       TextStyle? preferredStyle, TextStyle? parentStyle) {
+    final children = element.children ?? <md.Node>[];
+    final nonEmpty = children
+        .where((n) => !(n is md.Text && n.text.trim().isEmpty))
+        .toList();
+    if (nonEmpty.length == 1 &&
+        nonEmpty.first is md.Element &&
+        const {'note-image', 'img'}
+            .contains((nonEmpty.first as md.Element).tag)) {
+      return _buildImageFromElement(nonEmpty.first as md.Element);
+    }
+
     InlineSpan span(md.Node node, TextStyle current) {
       if (node is md.Text) return TextSpan(text: node.text, style: current);
       final item = node as md.Element;
+      if (item.tag == 'note-image' || item.tag == 'img') {
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _buildImageFromElement(item),
+        );
+      }
       if (item.tag == 'note-math') {
         return WidgetSpan(
             alignment: PlaceholderAlignment.middle,
@@ -121,8 +185,28 @@ class _ParagraphBuilder extends MarkdownElementBuilder {
     }
 
     return Text.rich(TextSpan(style: style, children: [
-      for (final child in element.children ?? <md.Node>[]) span(child, style)
+      for (final child in children) span(child, style)
     ]));
+  }
+}
+
+class _NoteImageBuilder extends MarkdownElementBuilder {
+  final double width;
+  final NoteImageLoader? imageLoader;
+  _NoteImageBuilder(this.width, this.imageLoader);
+  @override
+  bool isBlockElement() => false;
+  @override
+  Widget? visitElementAfterWithContext(BuildContext context, md.Element element,
+      TextStyle? preferredStyle, TextStyle? parentStyle) {
+    final w = double.tryParse(element.attributes['width'] ?? '');
+    return NoteImageView(
+      src: element.attributes['src'] ?? '',
+      alt: element.attributes['alt'] ?? '',
+      preferredWidth: w,
+      maxWidth: width,
+      loader: imageLoader,
+    );
   }
 }
 

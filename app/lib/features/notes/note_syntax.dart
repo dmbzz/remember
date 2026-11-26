@@ -80,6 +80,110 @@ List<String> splitNoteMarkdown(String source, {int targetLength = 2600}) {
   return sections.isEmpty ? [''] : sections;
 }
 
+class ParsedNoteImage {
+  final String src;
+  final String alt;
+  final double? width;
+  const ParsedNoteImage({
+    required this.src,
+    this.alt = '',
+    this.width,
+  });
+}
+
+const _noteImageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+
+bool isNoteImageRef(String ref) {
+  final clean = ref.split('|').first.split('#').first.trim().toLowerCase();
+  return _noteImageExtensions.any(clean.endsWith);
+}
+
+double? _parseImageWidthToken(String token) {
+  final m = RegExp(r'^(\d{2,4})(?:x\d{1,4})?$').firstMatch(token.trim());
+  if (m == null) return null;
+  final parsed = double.tryParse(m.group(1)!);
+  if (parsed == null || parsed <= 0) return null;
+  return parsed.clamp(48.0, 2400.0);
+}
+
+/// 解析 Obsidian `![[图片名.png]]`、`![[图片名.png|420]]`、`![[图片名.png|说明|420]]`。
+ParsedNoteImage? parseObsidianImageTarget(String raw) {
+  final parts = raw.split('|').map((s) => s.trim()).toList();
+  if (parts.isEmpty) return null;
+  final src = parts.first.split('#').first.trim();
+  if (src.isEmpty || !isNoteImageRef(src)) return null;
+  double? width;
+  final altParts = <String>[];
+  for (final token in parts.skip(1)) {
+    if (token.isEmpty) continue;
+    final parsedWidth = _parseImageWidthToken(token);
+    if (parsedWidth != null && width == null) {
+      width = parsedWidth;
+    } else {
+      altParts.add(token);
+    }
+  }
+  return ParsedNoteImage(
+    src: src,
+    alt: altParts.join(' · '),
+    width: width,
+  );
+}
+
+/// 解析标准 Markdown `![说明](路径)` 或 `![说明|420](路径)`。
+ParsedNoteImage parseMarkdownImage(String altRaw, String srcRaw) {
+  final parts = altRaw.split('|').map((s) => s.trim()).toList();
+  double? width;
+  final altParts = <String>[];
+  for (final token in parts) {
+    if (token.isEmpty) continue;
+    final parsedWidth = _parseImageWidthToken(token);
+    if (parsedWidth != null && width == null) {
+      width = parsedWidth;
+    } else {
+      altParts.add(token);
+    }
+  }
+  var src = srcRaw.trim();
+  if (!src.startsWith('http://') &&
+      !src.startsWith('https://') &&
+      src.contains('%')) {
+    try {
+      src = Uri.decodeFull(src);
+    } catch (_) {
+      // 保留原始字符串
+    }
+  }
+  return ParsedNoteImage(
+    src: src,
+    alt: altParts.join(' · '),
+    width: width,
+  );
+}
+
+class NoteImageInlineSyntax extends md.InlineSyntax {
+  NoteImageInlineSyntax() : super(r'!\[\[([^\[\]\n]+?)\]\]');
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    final parsed = parseObsidianImageTarget(match[1] ?? '');
+    if (parsed == null) {
+      parser.addNode(md.Text(match[0]!));
+      return true;
+    }
+    final node = md.Element.empty('note-image');
+    node.attributes['src'] = parsed.src;
+    if (parsed.alt.isNotEmpty) {
+      node.attributes['alt'] = parsed.alt;
+    }
+    if (parsed.width != null) {
+      node.attributes['width'] = parsed.width!.round().toString();
+    }
+    parser.addNode(node);
+    return true;
+  }
+}
+
 class NoteMathInlineSyntax extends md.InlineSyntax {
   NoteMathInlineSyntax()
       : super(r'\$\$([^\n]+?)\$\$|\$([^$\n]+?)\$|\\\((.+?)\\\)');

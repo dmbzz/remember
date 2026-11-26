@@ -9,7 +9,29 @@ import org.json.JSONObject
 
 /** Read and synchronize only the user-selected classroom Markdown directory. */
 class LocalNotesRepository(private val context: Context) {
-    companion object { private val lock = Any() }
+    companion object {
+        private val lock = Any()
+        private val IMAGE_EXTS = setOf(".png", ".jpg", ".jpeg", ".webp", ".gif")
+        private val SYNC_EXTS = setOf(".md") + IMAGE_EXTS
+
+        private fun isAllowedSyncPath(name: String): Boolean {
+            val lower = name.lowercase()
+            return SYNC_EXTS.any { lower.endsWith(it) }
+        }
+
+        private fun isImageName(name: String): Boolean {
+            val lower = name.lowercase()
+            return IMAGE_EXTS.any { lower.endsWith(it) }
+        }
+
+        private fun mimeForName(name: String): String = when {
+            name.endsWith(".png", true) -> "image/png"
+            name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
+            name.endsWith(".webp", true) -> "image/webp"
+            name.endsWith(".gif", true) -> "image/gif"
+            else -> "text/markdown"
+        }
+    }
     private val prefs = context.getSharedPreferences("class_notes_local_notes", Context.MODE_PRIVATE)
 
     fun saveFolder(uri: Uri, flags: Int): String = synchronized(lock) {
@@ -70,7 +92,7 @@ class LocalNotesRepository(private val context: Context) {
                     if (name != "转写原文") visit(uri, if (prefix.isEmpty()) name else "$prefix/$name", depth + 1)
                     continue
                 }
-                if (!name.endsWith(".md", ignoreCase = true)) continue
+                if (!isAllowedSyncPath(name)) continue
                 val relative = if (prefix.isEmpty()) name else "$prefix/$name"
                 val digest = MessageDigest.getInstance("SHA-256")
                 context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -81,21 +103,61 @@ class LocalNotesRepository(private val context: Context) {
                         digest.update(buffer, 0, read)
                     }
                 } ?: error("无法读取笔记：$relative")
-                val stem = name.dropLast(3)
-                val dateMatch = Regex("_(\\d{4}-\\d{2}-\\d{2})$").find(stem)
-                result.add(mapOf(
-                    "note_id" to "local:$uri",
-                    "topic" to (dateMatch?.let { stem.substring(0, it.range.first) } ?: stem),
-                    "course_name" to (prefix.substringAfterLast('/').ifEmpty { "未分类" }),
-                    "class_date" to dateMatch?.groupValues?.get(1),
-                    "relative_path" to relative,
-                    "sha256" to digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                ))
+                val sha = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                if (isImageName(name)) {
+                    result.add(mapOf(
+                        "note_id" to "local-asset:$uri",
+                        "kind" to "image",
+                        "topic" to name,
+                        "course_name" to (prefix.substringBefore('/').ifEmpty { "未分类" }),
+                        "class_date" to null,
+                        "relative_path" to relative,
+                        "sha256" to sha
+                    ))
+                } else {
+                    val stem = name.dropLast(3)
+                    val dateMatch = Regex("_(\\d{4}-\\d{2}-\\d{2})$").find(stem)
+                    val extractedDate = dateMatch?.groupValues?.get(1) ?: extractDateFromStem(stem)
+                    result.add(mapOf(
+                        "note_id" to "local:$uri",
+                        "kind" to "note",
+                        "topic" to (dateMatch?.let { stem.substring(0, it.range.first) } ?: stem),
+                        "course_name" to (prefix.substringAfterLast('/').ifEmpty { "未分类" }),
+                        "class_date" to extractedDate,
+                        "relative_path" to relative,
+                        "sha256" to sha
+                    ))
+                }
             }
         }
         visit(notesRoot, "", 0)
         result.sortBy { it["relative_path"].toString() }
         mapOf("folder" to (folderLabel() ?: "Obsidian 文件夹"), "items" to result)
+    }
+
+    private fun extractDateFromStem(stem: String): String? {
+        val sepMatch = Regex("(?<!\\d)((?:19|20)\\d{2})[-./年](0?[1-9]|1[0-2])[-./月](0?[1-9]|[12]\\d|3[01])日?(?!\\d)").find(stem)
+        if (sepMatch != null) {
+            val y = sepMatch.groupValues[1].toIntOrNull() ?: return null
+            val m = sepMatch.groupValues[2].toIntOrNull() ?: return null
+            val d = sepMatch.groupValues[3].toIntOrNull() ?: return null
+            return validIsoDate(y, m, d)
+        }
+        val compactMatch = Regex("(?<!\\d)((?:19|20)\\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])(?!\\d)").find(stem)
+        if (compactMatch != null) {
+            val y = compactMatch.groupValues[1].toIntOrNull() ?: return null
+            val m = compactMatch.groupValues[2].toIntOrNull() ?: return null
+            val d = compactMatch.groupValues[3].toIntOrNull() ?: return null
+            return validIsoDate(y, m, d)
+        }
+        return null
+    }
+
+    private fun validIsoDate(year: Int, month: Int, day: Int): String? = try {
+        java.time.LocalDate.of(year, month, day)
+        "%04d-%02d-%02d".format(year, month, day)
+    } catch (_: Exception) {
+        null
     }
 
     private fun notesRoot(tree: Uri, create: Boolean): Uri? {
@@ -133,7 +195,7 @@ class LocalNotesRepository(private val context: Context) {
         }
         override fun create(parent: String, name: String): String {
             require(find(parent, name) == null)
-            val uri = DocumentsContract.createDocument(context.contentResolver, Uri.parse(parent), "text/markdown", name)
+            val uri = DocumentsContract.createDocument(context.contentResolver, Uri.parse(parent), mimeForName(name), name)
                 ?: error("无法创建笔记文件")
             require(info(uri)?.second == name) { "该文件提供方改变了文件名，无法安全同步" }
             return canonical(uri)
@@ -177,7 +239,7 @@ class LocalNotesRepository(private val context: Context) {
         require(folderInfo()?.get("writable") == true) { "请重新选择手机目录，授予笔记同步读写权限" }
         transaction.recover()
         val parts = path.split('/')
-        require(path.length <= 1024 && parts.size <= 17 && path.endsWith(".md", true) && !path.contains('\\') &&
+        require(path.length <= 1024 && parts.size <= 17 && isAllowedSyncPath(path) && !path.contains('\\') &&
             !path.contains(':') && !path.contains('\u0000') && parts.none { it.isEmpty() || it == "." || it == ".." || it.startsWith(".") || it.startsWith("00-") || it == "转写原文" }) { "无效的同步笔记路径" }
         var parent = notesRoot(tree, true)!!
         for (part in parts.dropLast(1)) {
@@ -203,7 +265,7 @@ class LocalNotesRepository(private val context: Context) {
         require(tree.toString() == identity) { "手机目录已变化，停止传输" }
         transaction.recover()
         val parts = path.split('/')
-        require(path.length <= 1024 && parts.size <= 17 && path.endsWith(".md", true) &&
+        require(path.length <= 1024 && parts.size <= 17 && isAllowedSyncPath(path) &&
             !path.contains('\\') && !path.contains(':') && !path.contains('\u0000') &&
             parts.none { it.isEmpty() || it == "." || it == ".." || it.startsWith(".") || it.startsWith("00-") || it == "转写原文" }) { "无效的笔记路径" }
         var parent = notesRoot(tree, false) ?: error("手机课堂笔记目录不存在")
@@ -222,5 +284,70 @@ class LocalNotesRepository(private val context: Context) {
         val uri = Uri.parse(noteId.removePrefix("local:"))
         require(uri.authority == currentTree.authority && DocumentsContract.getTreeDocumentId(uri) == DocumentsContract.getTreeDocumentId(currentTree)) { "笔记不属于当前所选目录" }
         String(bytes(uri), Charsets.UTF_8)
+    }
+
+    fun readAsset(ref: String, noteId: String?, course: String?): ByteArray? = synchronized(lock) {
+        if (prefs.getString("tree", null) == null) return@synchronized null
+        var cleaned = try {
+            java.net.URLDecoder.decode(ref, "UTF-8")
+        } catch (_: Exception) {
+            ref
+        }.substringBefore('|').substringBefore('#').trim()
+        if (cleaned.startsWith("./")) cleaned = cleaned.substring(2)
+        val lower = cleaned.lowercase()
+        if (cleaned.isEmpty() || cleaned.length > 512 ||
+            lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("data:") ||
+            cleaned.contains('\\') || cleaned.contains(':') || cleaned.contains('\u0000') ||
+            cleaned.startsWith("/")) {
+            return@synchronized null
+        }
+        val parts = cleaned.split('/')
+        if (parts.size > 16 || parts.any { it.isEmpty() || it == "." || it == ".." || it.startsWith(".") || it.startsWith("00-") || it == "转写原文" } || !isImageName(cleaned)) {
+            return@synchronized null
+        }
+        val tree = tree()
+        val root = notesRoot(tree, false) ?: return@synchronized null
+
+        fun findByParts(base: Uri, relParts: List<String>): Uri? {
+            var current = base
+            for ((idx, part) in relParts.withIndex()) {
+                val child = children(tree, current).firstOrNull { it.second == part } ?: return null
+                val isDir = child.third == DocumentsContract.Document.MIME_TYPE_DIR
+                if (idx < relParts.lastIndex && !isDir) return null
+                if (idx == relParts.lastIndex && isDir) return null
+                current = child.first
+            }
+            return current
+        }
+
+        fun findByNameRecursive(base: Uri, targetName: String, depth: Int): Uri? {
+            if (depth > 16) return null
+            val entries = children(tree, base)
+            // 先查当前层精确匹配与 _图 子目录
+            entries.firstOrNull { it.third != DocumentsContract.Document.MIME_TYPE_DIR && it.second == targetName }?.let { return it.first }
+            entries.firstOrNull { it.third == DocumentsContract.Document.MIME_TYPE_DIR && it.second == "_图" }?.let { figDir ->
+                children(tree, figDir.first).firstOrNull { it.third != DocumentsContract.Document.MIME_TYPE_DIR && it.second == targetName }?.let { return it.first }
+            }
+            for ((uri, name, mime) in entries.sortedBy { it.second }) {
+                if (mime != DocumentsContract.Document.MIME_TYPE_DIR) continue
+                if (name.startsWith(".") || name.startsWith("00-") || name == "转写原文" || name == "_图") continue
+                findByNameRecursive(uri, targetName, depth + 1)?.let { return it }
+            }
+            return null
+        }
+
+        val courseDir = course?.trim()?.takeIf {
+            it.isNotEmpty() && !it.contains('/') && !it.contains('\\') && !it.startsWith(".") && !it.startsWith("00-")
+        }?.let { cname ->
+            children(tree, root).firstOrNull { it.third == DocumentsContract.Document.MIME_TYPE_DIR && it.second == cname }?.first
+        }
+
+        val targetUri: Uri? = if (parts.size > 1) {
+            (courseDir?.let { findByParts(it, parts) }) ?: findByParts(root, parts)
+        } else {
+            val fileName = parts[0]
+            (courseDir?.let { findByNameRecursive(it, fileName, 0) }) ?: findByNameRecursive(root, fileName, 0)
+        }
+        targetUri?.let { bytes(it) }
     }
 }

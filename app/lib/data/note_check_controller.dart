@@ -323,7 +323,7 @@ class NoteCheckController extends ChangeNotifier {
       if (!current()) return;
       final items = validatedItems(local);
       final signature = jsonEncode(items);
-      localNotes = local;
+      localNotes = local.where(isMarkdownNoteEntry).toList();
       if (_localSignature != signature) {
         _localSignature = signature;
         localRevision.value++;
@@ -357,6 +357,28 @@ class NoteCheckController extends ChangeNotifier {
     }
   }
 
+  static const syncAllowedExtensions = [
+    '.md',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.webp',
+    '.gif',
+  ];
+
+  static bool isAllowedSyncPath(String path) {
+    final lower = path.toLowerCase();
+    return syncAllowedExtensions.any(lower.endsWith);
+  }
+
+  static bool isMarkdownNoteEntry(Map<String, dynamic> item) {
+    final kind = item['kind']?.toString();
+    if (kind == 'image') return false;
+    final path = (item['relative_path'] ?? item['obsidian_path'] ?? '').toString();
+    if (path.isEmpty) return true;
+    return path.toLowerCase().endsWith('.md');
+  }
+
   static List<Map<String, String>> validatedItems(
       List<Map<String, dynamic>> local) {
     final paths = <String>{};
@@ -376,7 +398,7 @@ class NoteCheckController extends ChangeNotifier {
           normalized
               .split('/')
               .any((part) => part.isEmpty || part == '.' || part == '..') ||
-          !normalized.toLowerCase().endsWith('.md') ||
+          !isAllowedSyncPath(normalized) ||
           !paths.add(normalized)) {
         throw const FormatException('手机笔记路径异常或重复，请检查所选目录');
       }

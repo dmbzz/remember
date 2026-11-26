@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:io';
+import 'package:flutter/material.dart';
 
 import '../../core/note_opening_route.dart';
 import '../../core/shapes.dart';
@@ -10,6 +11,7 @@ import '../../data/api_client.dart';
 import '../../data/note_check_controller.dart';
 import 'note_check_panel.dart';
 import 'note_detail_page.dart';
+import 'note_sort.dart';
 import '../pairing/pairing_page.dart';
 import '../../platform/local_notes_bridge.dart';
 import '../../platform/local_backend_bootstrap.dart';
@@ -35,6 +37,7 @@ class _NotesPageState extends State<NotesPage> {
   String? _error;
   String _selectedCourse = '全部';
   String _query = '';
+  NoteSortOrder _sortOrder = NoteSortOrder.newestFirst;
   int _loadVersion = 0;
   final _cardKeys = <String, GlobalKey>{};
   final _titleKeys = <String, GlobalKey>{};
@@ -46,7 +49,20 @@ class _NotesPageState extends State<NotesPage> {
     super.initState();
     LocalNotesBridge.changed.addListener(_folderChanged);
     widget.noteChecks?.localRevision.addListener(_checkedLocalNotes);
+    unawaited(_loadSortOrder());
     _loadNotes();
+  }
+
+  Future<void> _loadSortOrder() async {
+    final loaded = await NoteSortOrder.load();
+    if (!mounted || loaded == _sortOrder) return;
+    setState(() => _sortOrder = loaded);
+  }
+
+  void _toggleSortOrder() {
+    final next = _sortOrder.toggled;
+    setState(() => _sortOrder = next);
+    unawaited(next.save());
   }
 
   @override
@@ -80,7 +96,7 @@ class _NotesPageState extends State<NotesPage> {
     if (mounted && notes != null) {
       ++_loadVersion;
       setState(() {
-        _notes = notes;
+        _notes = notes.where(NoteCheckController.isMarkdownNoteEntry).toList();
         _isLoading = false;
         _error = null;
       });
@@ -198,7 +214,7 @@ class _NotesPageState extends State<NotesPage> {
         final notes = await LocalNotesBridge.list();
         if (mounted && version == _loadVersion) {
           setState(() {
-            _notes = notes;
+            _notes = notes.where(NoteCheckController.isMarkdownNoteEntry).toList();
             _isLoading = false;
             _error = null;
           });
@@ -256,12 +272,13 @@ class _NotesPageState extends State<NotesPage> {
 
   List<Map<String, dynamic>> get _visibleNotes {
     final query = _query.trim().toLowerCase();
-    return _notes.where((note) {
+    final filtered = _notes.where((note) {
       final course = (note['course_name'] ?? '').toString();
       final topic = (note['topic'] ?? '').toString();
       return (_selectedCourse == '全部' || course == _selectedCourse) &&
           (query.isEmpty || '$course $topic'.toLowerCase().contains(query));
-    }).toList();
+    });
+    return sortNotesByTitleTime(filtered, _sortOrder);
   }
 
   @override
@@ -388,17 +405,67 @@ class _NotesPageState extends State<NotesPage> {
               else ...[
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: AnimatedSwitcher(
-                      duration: StudyMotion.quick(context),
-                      child: Text('最近笔记 · ${_visibleNotes.length}',
-                          key: ValueKey(_visibleNotes.length),
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: colors.onSurface)),
-                    ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: AnimatedSwitcher(
+                          duration: StudyMotion.quick(context),
+                          child: Text(
+                              '${_sortOrder == NoteSortOrder.newestFirst ? '最近笔记' : '早期笔记'} · ${_visibleNotes.length}',
+                              key: ValueKey(
+                                  '${_sortOrder.wireValue}-${_visibleNotes.length}'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: colors.onSurface)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Semantics(
+                        button: true,
+                        label: _sortOrder.tooltip,
+                        excludeSemantics: true,
+                        child: Tooltip(
+                          message: _sortOrder.tooltip,
+                          child: OutlinedButton.icon(
+                            key: const Key('notes-sort-order-button'),
+                            onPressed: _toggleSortOrder,
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(48, 36),
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              tapTargetSize: MaterialTapTargetSize.padded,
+                              side: BorderSide(
+                                color: MediaQuery.highContrastOf(context)
+                                    ? colors.onSurface
+                                    : colors.outlineVariant,
+                                width: MediaQuery.highContrastOf(context)
+                                    ? 1.5
+                                    : 1.0,
+                              ),
+                              foregroundColor: colors.onSurface,
+                            ),
+                            icon: Icon(
+                              _sortOrder == NoteSortOrder.newestFirst
+                                  ? Icons.arrow_downward_rounded
+                                  : Icons.arrow_upward_rounded,
+                              size: (16.0 *
+                                      (MediaQuery.textScalerOf(context)
+                                                  .scale(14) /
+                                              14)
+                                          .clamp(1.0, 1.4))
+                                  .roundToDouble(),
+                            ),
+                            label: Text(_sortOrder.label),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 for (var i = 0; i < _visibleNotes.length; i++)

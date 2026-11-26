@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,6 +33,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
   String? _error;
   double _fontSize = 16;
   final _scrollController = ScrollController();
+  final Map<String, Future<Uint8List?>> _imageCache = {};
   @override
   void initState() {
     super.initState();
@@ -59,6 +61,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
   }
 
   Future<void> _fetchContent() async {
+    _imageCache.clear();
     setState(() {
       _isLoading = true;
       _error = null;
@@ -85,6 +88,42 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
         _error = res.error ?? '未知错误';
       }
     });
+  }
+
+  Future<Uint8List?> _loadNoteImage(String ref) {
+    final existing = _imageCache[ref];
+    if (existing != null) return existing;
+    final future = () async {
+      try {
+        if (widget.noteId.startsWith('local:')) {
+          try {
+            final localBytes = await LocalNotesBridge.readAsset(
+              ref,
+              noteId: widget.noteId,
+              course: widget.course,
+            );
+            if (localBytes != null && localBytes.isNotEmpty) {
+              return localBytes;
+            }
+          } catch (_) {}
+        }
+        final remote = await widget.apiClient.getNoteAsset(
+          ref,
+          noteId: widget.noteId,
+          course: widget.course,
+        );
+        if (remote.ok && remote.data != null && remote.data!.isNotEmpty) {
+          return remote.data;
+        }
+        _imageCache.remove(ref);
+        return null;
+      } catch (_) {
+        _imageCache.remove(ref);
+        return null;
+      }
+    }();
+    _imageCache[ref] = future;
+    return future;
   }
 
   void _readingOptions() => showModalBottomSheet<void>(
@@ -124,7 +163,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
                           const Text('A', style: TextStyle(fontSize: 26)),
                         ]),
                         const SizedBox(height: 12),
-                        Text('长公式可左右滑动；思维导图可拖动、缩放或展开。',
+                        Text('长公式可左右滑动；图片可点击放大缩放；思维导图可拖动、缩放或展开。',
                             style: Theme.of(context).textTheme.bodySmall),
                       ]),
                 ))),
@@ -156,7 +195,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
                         icon: const Icon(Icons.refresh_rounded)),
                   ]))),
           body: LayoutBuilder(builder: (context, box) {
-            final compact = box.maxHeight < 230;
+            final compact = box.maxHeight < 420;
             final headingStyle = Theme.of(context)
                 .textTheme
                 .headlineMedium!
@@ -291,6 +330,7 @@ class _NoteDetailPageState extends State<NoteDetailPage> {
                                                 : NoteMarkdown(
                                                     data: _sections[index - 1],
                                                     fontSize: _fontSize,
+                                                    imageLoader: _loadNoteImage,
                                                   ),
                                           ),
                                         ),

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ from app.schemas.note import (
 )
 from app.services.note_generation_service import NoteGenerationService
 from app.services.vault_notes_service import VaultNotesService
+from app.core.note_sorting import sort_notes_by_title_time
 from app.services.note_check_service import NoteCheckRequest, NoteCheckService
 from app.services.note_file_sync_service import NoteFileSyncService
 from app.services.note_choice_service import (ChoiceScope, NoteChoiceRequest, NoteChoiceApply, NoteChoiceService)
@@ -120,10 +122,12 @@ async def generate_note(
 async def list_notes(
     course: str | None = Query(None, description="按课程名称过滤"),
     q: str | None = Query(None, description="按主题关键字过滤"),
+    order: Literal["desc", "asc"] = Query("desc", description="按标题时间排序方向：desc 最新优先，asc 从早到晚"),
     session: AsyncSession = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> dict:
     """查询未删除的笔记列表。"""
+    descending = order != "asc"
     if config.deployment_mode == "local":
         vault_items = VaultNotesService(config).list()
         db_items: list[NoteDTO] = []
@@ -171,7 +175,7 @@ async def list_notes(
         if q:
             needle = q.casefold()
             items = [item for item in items if needle in item.topic.casefold()]
-        items.sort(key=lambda item: item.updated_at.timestamp(), reverse=True)
+        items = sort_notes_by_title_time(items, descending=descending)
         return ok(NoteListResponse(items=items, total=len(items)).model_dump())
 
     stmt = (
@@ -188,9 +192,9 @@ async def list_notes(
     res = await session.execute(stmt)
     rows = res.all()
 
-    items: list[dict[str, Any]] = []
+    dtos: list[NoteDTO] = []
     for note, course_name in rows:
-        dto = NoteDTO(
+        dtos.append(NoteDTO(
             id=note.id,
             note_id=note.note_id,
             course_name=course_name or note.course_id,
@@ -204,10 +208,34 @@ async def list_notes(
             marker_stats=note.marker_stats or {},
             created_at=note.created_at,
             updated_at=note.updated_at,
-        )
-        items.append(dto.model_dump())
+        ))
+    dtos = sort_notes_by_title_time(dtos, descending=descending)
+    items = [dto.model_dump() for dto in dtos]
 
     return ok(NoteListResponse(items=items, total=len(items)).model_dump())
+
+
+@router.get("/asset", summary="读取课堂笔记图片附件")
+async def get_note_asset(
+    ref: str = Query(..., min_length=1, max_length=512, description="笔记中的图片引用"),
+    note_id: str | None = Query(None, max_length=128, description="所属笔记 ID，用于优先在同目录查找"),
+    course: str | None = Query(None, max_length=128, description="所属课程目录名"),
+    config: AppConfig = Depends(get_config),
+) -> Response:
+    """安全读取课堂笔记目录内的图片附件字节（禁止穿越目录或读取非图片文件）。"""
+    if config.deployment_mode != "local":
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "仅本地电脑模式支持读取课堂笔记图片")
+    data, media_type, _ = await run_in_threadpool(
+        VaultNotesService(config).read_image,
+        ref,
+        note_id=note_id,
+        course=course,
+    )
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.get("/{id}", summary="获取单篇笔记元数据")
